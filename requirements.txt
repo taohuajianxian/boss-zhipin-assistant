@@ -1,0 +1,8 @@
+# boss-zhipin-deliver 运行依赖（纯标准库为主，仅一项外部包）
+#
+# certifi：HTTPS 校验用的 CA 包。
+# 部分 Windows 机器 OpenSSL 默认 CA 路径缺失或系统证书库含过期根，
+# 会让 urllib 对合法 Let's Encrypt 证书误报 "certificate has expired"；
+# cloud_client._ssl_context() 优先用 certifi，缺失时回退系统默认。
+certifi>=2023.7.22
+# （内容由AI生成，仅供参考）

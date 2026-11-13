@@ -1,0 +1,6 @@
+{
+  "endpoint": "https://boss.thjx.dpdns.org",
+  "wechat_id": "taohuajianxian",
+  "signing_key": "",
+  "_note": "服务地址与作者微信已预填，开箱即可激活，无需改动。如需自定义，可复制本文件为 cloud_config.local.json 并修改同名字段（本地文件优先），或用环境变量 BOSS_LICENSE_ENDPOINT / BOSS_SIGNING_KEY 覆盖。signing_key 留空时每次启动联网核验一次；填入与服务端一致的值可在本地验签、联网核验改为 72 小时一次。若把 endpoint 留空，只能使用随包附带的免费体验指令包，汇报页不显示微信号。"
+}

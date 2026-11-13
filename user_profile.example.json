@@ -1,0 +1,97 @@
+{
+  "_说明": "本文件是技能唯一用户数据源。请按自身情况逐项修改；未填项不影响运行。core_prefer / generic_prefer / black_title / black_industry 供 AI 按语义筛选时参考，不依赖本地关键词脚本。",
+  "user_name": "",
+  "role_summary": "",
+  "experience": "",
+  "domain_description": "（填写你的目标方向描述，供 AI 语义判断使用。例：想找xx行业xx类运营岗，偏重xx；同时考虑用 AI 工具提效类岗位，非软件研发方向。）",
+  "target_city": "北京",
+  "city_code": "101010100",
+  "min_salary_k": 0,
+  "daily_target": 100,
+  "session_name": "boss-main",
+  "prefer": [
+    "运营",
+    "内容运营",
+    "活动策划",
+    "品牌策划",
+    "项目管理",
+    "市场推广",
+    "客户成功"
+  ],
+  "avoid": [
+    "基础前台",
+    "售票员",
+    "线下销售",
+    "纯销售",
+    "电话客服",
+    "保险",
+    "房产中介",
+    "猎头代招",
+    "匿名公司名",
+    "小时计薪岗位",
+    "元/时",
+    "日结结算"
+  ],
+  "prefer_no_big_company": false,
+  "prefer_no_headhunter": true,
+  "search_keywords": [
+    "运营",
+    "内容运营",
+    "活动策划",
+    "品牌策划",
+    "项目管理",
+    "市场推广"
+  ],
+  "insurance_forbidden": true,
+  "part_time_policy": {
+    "allowed": true,
+    "hurdle": "兼职/日结/时薪岗审核标准远高于全职，需同时满足三项，缺一不投",
+    "requirements": [
+      "方向高度贴切：命中 core_prefer 中的核心方向词（非泛词）",
+      "公司成立时间较久：成立年限 >= 5 年（信息缺失视为不达标）",
+      "公司背景可靠：名称含集团/股份/国企/控股等，或已上市/融资轮次/百人以上规模背书"
+    ]
+  },
+  "anon_company_forbidden": true,
+  "anon_company_rule": "公司名以「某」开头或含某大型/某知名/某中型/某小型/某上市等模糊指代=猎头代招/匿名岗位，一律不投",
+  "direction_priority": "（选填。若有多类同等权重方向，在此说明，并在 search_keywords 中让它们紧邻排列、同批覆盖。单选方向可留空。）",
+  "salary_rule": "按薪资区间**下限**判定是否达标（下限 < min_salary_k 即拒），上限不用于放行；min_salary_k = 0 表示不限制。面议等无法解析下限的薪资按不达标处理。兼职/日结/时薪岗不套用本规则，走 part_time_policy 三项门槛。",
+  "core_prefer": [
+    "运营",
+    "内容运营",
+    "活动策划",
+    "品牌策划",
+    "项目管理",
+    "市场推广",
+    "客户成功"
+  ],
+  "generic_prefer": [
+    "运营",
+    "策划",
+    "内容",
+    "市场",
+    "营销",
+    "品牌",
+    "项目"
+  ],
+  "black_title": [
+    "销售",
+    "导购",
+    "营业员",
+    "工程师",
+    "实习",
+    "客服",
+    "主播",
+    "合伙人",
+    "联合创始人",
+    "开发",
+    "测试"
+  ],
+  "black_industry": [
+    "代理招募",
+    "中介",
+    "贷款",
+    "理财",
+    "催收"
+  ]
+}
