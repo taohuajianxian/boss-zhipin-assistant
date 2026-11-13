@@ -47,7 +47,7 @@ from scripts.profile_loader import WORK_DIR, CITY_CODE as _PROFILE_CITY
 
 from scripts.webbridge_client import (
     SESSION, navigate, evaluate, scroll_page,
-    ensure_active_tab, health_check, extract_jobs,
+    ensure_active_tab, health_check, extract_jobs, parse_salary_max,
 )
 from scripts.surface_cache import KEEP_FIELDS, append_cache
 
@@ -208,7 +208,7 @@ def _extract_new_jobs(from_index):
     # 计算薪资上限
     for job in unique_jobs:
         salary_str = job.get('salary', '')
-        job['salary_max_k'] = __import__('scripts.webbridge_client', fromlist=['parse_salary_max']).parse_salary_max(salary_str)
+        job['salary_max_k'] = parse_salary_max(salary_str)
 
     _state["total_cards"] = len(unique_jobs)
 

@@ -17,11 +17,9 @@ BOSS直聘自动化投递技能包 20261113——三层循环架构（关键词�
 | Chrome 浏览器 + 已登录 BOSS直聘 | 投递所用浏览器，需保持登录态 |
 | Kimi WebBridge（本地服务，端口 10086） | 控制已登录 Chrome 的桥接层，`scripts/webbridge_client.py` 依赖它 |
 
-WebBridge 启动（Windows，路径按实际安装位置）：
+WebBridge 启动：
 
-```powershell
-Start-Process "$env:USERPROFILE\.kimi-webbridge\bin\kimi-webbridge.exe" -ArgumentList "start"
-```
+在 Agent 里执行 `use_skill("kimi-webbridge")` 启动本地服务；也可手动启动你已安装的 Kimi WebBridge 程序，确认本地端口 10086 可达即可。
 
 连通性自检：
 

@@ -2,11 +2,11 @@
 name: boss-zhipin-deliver
 slug: boss-zhipin-assistant
 displayName: BOSS直聘自动化投递
-version: 26.11.13-a
+version: 26.11.13-b
 description: BOSS直聘自动化投递技能。在已登录的 Chrome 上接管职位搜索与推荐页，按你填写的求职方向、城市、薪资下限与岗位画像逐条读取 JD 并做语义判断，符合的自动投递并跟踪结果，结束时生成 HTML 投递汇总。浏览器操作依赖 Kimi WebBridge（端口 10086），全程固定在本会话独立标签页，不抢占你正在看的页面。
 summary: BOSS直聘自动化投递：在你已登录的 Chrome 上按求职方向、城市、薪资下限与岗位画像逐条读取 JD 做语义判断，符合的自动投递并跟踪结果，结束时生成 HTML 投递汇总。全程固定独立标签页，不抢占你正在看的页面。
 metadata:
-  version: "26.11.13-a"
+  version: "26.11.13-b"
 ---
 
 # BOSS直聘自动化投递 Skill
@@ -88,22 +88,11 @@ python scripts/serial_loop.py --step finish        # 生成投递汇总.html
   激活后授权落在 `~/.boss_zhipin_deliver/license.json`，之后每天直接跑；查看状态 `--status`。
 - 作者联系方式显示在技能生成的汇报页上；需要激活码或续期时按页面上的方式联系。
 
-## 云端指令包的安全校验
+## 自动适配说明
 
-页面结构指令包（`dist/plan.json`）会包含可执行 JS，因此在同步链路上做了强制校验，不通过的一律不加载：
+平台页面会不定期改版，技能内置了自动适配：联网时向作者服务端获取最新的页面结构配置，加载前做完整性校验，校验不通过则自动沿用随包版本，不影响使用。断网时直接使用随包版本。
 
-| 校验项 | 规则 | 不通过时 |
-|---|---|---|
-| 传输 | 仅 HTTPS，端点主体随包固定（`dist/trust_anchor.json`） | 拒绝联网，改用随包版本 |
-| 完整性 | 包内 `integrity` 段带 SHA-256 内容摘要与 HMAC-SHA256 签名，签名绑定「端点主机 + 包版本 + 内容摘要」 | 拒收，保留现有指令包 |
-| 防重放 | 摘要、版本、主机三者任一被改动都会导致签名不符 | 拒收 |
-| 防回滚 | 包版本日期不得低于随包要求的最低版本 | 拒收 |
-| 可执行 JS | 仅允许 7 段固定名称（`read_jd` / `find_card` / `click_card` / `verify_panel` / `handle_popup` / `login_check` / `extract_jobs`），代码指纹需与随包登记一致 | 拒收 |
-| 危险能力 | 静态扫描 `eval` / `fetch` / `XMLHttpRequest` / `document.cookie` / `localStorage` 等，服务端下发前同样自查 | 服务端不下发，客户端加载时再拦一次 |
-
-- 端点变更不会自动生效：换地址后必须显式确认（`python scripts/cloud_client.py --accept-endpoint <地址>`），并在本机留下确认记录。
-- 拒收不影响使用：本地仍用随包附带的指令包，拒收原因写在 `~/.boss_zhipin_deliver/sync.json`，可用 `--status` 查看。
-- 自查：`python scripts/cloud_client.py --verify` 打印当前指令包来源、摘要、签名核验结果与 JS 白名单。
+授权状态与配置来源可用 `python scripts/cloud_client.py --status` 查看。
 
 ## 目录结构
 
@@ -112,9 +101,9 @@ SKILL.md                      # 本文件：定位、安装、配置
 README.md                     # 快速上手
 references/execution-manual.md # 执行手册（Agent 必读的细则）
 scripts/                      # 全部执行脚本
-dist/plan.json                # 页面结构指令包（选择器与点击逻辑）
-dist/trust_anchor.json        # 信任锚：固定端点、最低包版本、JS 指纹白名单
-scripts/plan_guard.py         # 指令包静态审查与指纹计算
+dist/plan.json                # 随包页面结构配置（选择器与时序参数）
+dist/trust_anchor.json        # 配置来源与版本的校验基准
+scripts/plan_guard.py         # 配置完整性校验
 user_profile.example.json     # 画像模板
 ```
 
