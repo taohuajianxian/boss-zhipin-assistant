@@ -95,7 +95,7 @@ def parse_salary_max(s):
 def parse_salary_min(s):
     """解析薪资字符串，返回区间下界（K为单位）
 
-    ★ 20261113: 薪资口径改为「下限≥阈值」，不再用上限放行。
+    薪资口径：「下限≥阈值」，不用上限放行。
     例: "12-20K" → 12, "5-8K·14薪" → 5, "4000-6000元/月" → 4, "8K以上" → 8
     无法解析（如"面议"）返回 0，调用方需自行兜底。
     """
@@ -154,7 +154,7 @@ def evaluate(code, session=SESSION):
 def navigate(url, wait_range=(4, 6), session=SESSION, new_tab=False, group_title=None):
     """导航到 URL 并等待 SPA 渲染
 
-    ★ 20260911: 增加 new_tab 支持。new_tab=True 时在独立新标签页打开
+    new_tab=True 时在独立新标签页打开
     （不抢占用户当前页面），group_title 用于设置标签组显示名。
     """
     args = {"url": url}
@@ -509,7 +509,7 @@ def health_check(host=DEFAULT_HOST, port=DEFAULT_PORT):
 def ensure_active_tab(session=SESSION, timeout_wait=10):
     """确保 session 有独立活跃的 BOSS 标签页（不抢占用户页面）
 
-    ★ 20260911 修复: 会话绑定用户切标签会落到用户页面的问题。
+    会话绑定：切标签不会落到用户页面。
     原则: 只在本 session 自己打开的标签页中定位 BOSS 标签页，
     绝不借用户当前查看的页面（find_tab 不传 active=True）。
     """

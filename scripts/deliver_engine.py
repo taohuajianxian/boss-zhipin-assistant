@@ -2,7 +2,7 @@
 """
 模块 F: 投递执行引擎（推荐页/搜索页内原地投递 + 智能页面反馈监测）
 
-★ v5.0 新增:
+新增:
   - check_delivery_target() — 流程图"总投递数量是否满足要求"节点
   - DAILY_TARGET 常量 — 每日投递目标（默认150）
 
@@ -13,7 +13,7 @@
   4. 致命错误优先检测: 在处理弹窗之前检测上限提示
   5. 连续 3 次未知状态 -> 熔断暂停
 
-★ v4.2 修复:
+关键处理:
   1. 点击 .op-btn-chat 前先 scrollIntoView 确保按钮在视口内
   2. 每步操作后立即检测状态
   3. 正确处理原地弹窗
@@ -47,7 +47,7 @@ from scripts.webbridge_client import (
 from scripts.jd_reader import click_card_inplace
 
 # ═══════════════════════════════════════════════════════════
-# ★ v5.0 投递目标常量 — 从 user_profile.json 读取 (profile_loader 导入)
+# 投递目标常量 — 从 user_profile.json 读取 (profile_loader 导入)
 # ═══════════════════════════════════════════════════════════
 
 
@@ -55,7 +55,7 @@ from scripts.jd_reader import click_card_inplace
 # 页面反馈检测常量 (从 v2 迁移)
 # ═══════════════════════════════════════════════════════════
 
-# ★ 20260810 拆分：120次沟通上限 ≠ 完全日上限
+# 120 次沟通上限 ≠ 完全日上限
 # 沟通上限仍然可以搜索浏览收集，不应触发 step_finish() 终止一切
 COMM_LIMIT_PATTERNS = [
     "您今天已与",           # "您今天已与120/120位BOSS沟通过" — 仅限制新沟通，可继续搜索
@@ -93,12 +93,12 @@ SKIP_PATTERNS = [
 ]
 
 MAX_CONSECUTIVE_UNKNOWN = 3
-# ★ 20261113: 连续 N 条 comm_limit 判定为"页面被遮罩挡住"或"平台真封顶"，停止本批待人工确认
+# 连续 N 条 comm_limit 判定为"页面被遮罩挡住"或"平台真封顶"，停止本批待人工确认
 MAX_CONSECUTIVE_COMM = 3
 
 
 # ═══════════════════════════════════════════════════════════
-# ★ v5.0 投递目标检查 — 流程图"总投递数量是否满足要求"节点
+# 投递目标检查 — 流程图"总投递数量是否满足要求"节点
 # ═══════════════════════════════════════════════════════════
 
 def check_delivery_target(progress_file=None):
@@ -267,7 +267,7 @@ def _check_fatal_patterns():
     if "login" in current_url or "passport" in current_url:
         return 'login_expired', f"页面跳转登录: {current_url[:80]}"
 
-    # ★ 20260911 修复: 两级上限精确区分（用户实测反馈）
+    # 两级上限精确区分
     #   120次: "您今天已与120/120位BOSS沟通过" — 仅提示，仍可继续投递
     #   150次: "您今天已与150位BOSS沟通，休息一下，明天再来吧～" — 硬顶，停止一切
     #   旧版 COMM_LIMIT_PATTERNS=["您今天已与"] 同时匹配两级，且先于 FATAL 检测，
@@ -286,7 +286,7 @@ def _check_fatal_patterns():
             return 'fatal_limit', f"触发每日硬顶({num}位): 停止投递"
         return 'comm_limit', f"触发沟通上限提示({num}位): 仍可继续投递"
 
-    # 回退: 模式匹配 — ★ 20260911 调整顺序: 先 FATAL（150硬顶特征更强）再 COMM（120软顶）
+    # 回退: 模式匹配 — 先 FATAL（150硬顶特征更强）再 COMM（120软顶）
     for pattern in FATAL_PATTERNS:
         if pattern in page_text:
             return 'fatal_limit', f"触发每日上限: {pattern}"
@@ -342,11 +342,11 @@ def deliver_inplace(job_id, job_info=None):
     """
     title = (job_info or {}).get('title', '')[:25] if job_info else job_id
 
-    # ★ 20260911: 投递前确保仍在本 session 独立标签页（用户切标签也不会误投到用户页面）
+    # 投递前确保仍在本 session 独立标签页（切标签也不会误投到其他页面）
     if not ensure_active_tab():
         return 'fail', '无法确认独立标签页，停止投递'
 
-    # ★ 20261113 preflight 清障：BOSS 上限提示会叠加 2~6 层遮罩，遮罩挡住卡片点击时，
+    # preflight 清障：上限提示会叠加 2~6 层遮罩，遮罩挡住卡片点击时，
     # 页面表现为"点了没反应"，会被误判成 comm_limit/fail（假失败主因）。
     # 零延时探测：干净则直接跳过，只有真检测到遮罩才付出关闭成本。
     _residue = popup_residue()
@@ -443,7 +443,7 @@ def deliver_inplace(job_id, job_info=None):
     if sent_greeting:
         return 'success', '投递成功(已发送招呼)'
 
-    # v5.1 修复: "留在此页"被点击本身就是投递成功的强证据
+    # "留在此页"被点击本身就是投递成功的强证据
     # "留在此页"按钮只在招呼语发送成功后的确认弹窗中出现
     if stayed_on_page:
         return 'success', '投递成功(留在此页已点击,招呼弹窗可能自动发送)'
@@ -504,7 +504,7 @@ def run_batch(jobs_file, progress_file="stream_progress.json", max_count=0):
 
         status, detail = deliver_inplace(job_id, job_info=job)
 
-        # ★ 20261113: comm_limit 先清障再复投一次。实测多数 comm_limit 是遮罩挡住点击的假失败，
+        # comm_limit 先清障再复投一次。多数 comm_limit 是遮罩挡住点击的假失败，
         # 关掉叠加弹窗后重投通常直接成功；只有清障后仍 comm_limit 才算真上限。
         if status == 'comm_limit':
             _cleared = handle_popup()
@@ -545,7 +545,7 @@ def run_batch(jobs_file, progress_file="stream_progress.json", max_count=0):
             print(f"\n致命错误，整批停止")
             break
 
-        # ★ 20261113: 120 次提示是"仍可继续"，150 次才是硬顶（硬顶已由 fatal_limit 在上方拦截）。
+        # 120 次提示是"仍可继续"，150 次才是硬顶（硬顶已由 fatal_limit 在上方拦截）。
         # 单次 comm_limit 不阻断；但连续多条说明遮罩清不干净或平台真封顶，继续投只会刷假失败。
         if status == 'comm_limit':
             consecutive_comm += 1
@@ -557,7 +557,7 @@ def run_batch(jobs_file, progress_file="stream_progress.json", max_count=0):
         else:
             consecutive_comm = 0
 
-        # ★ v5.0 投递目标检查
+        # 投递目标检查
         target_check = check_delivery_target(progress_file)
         if target_check["target_met"]:
             print(f"\n★ 投递目标 {DAILY_TARGET} 份已达成！停止投递")

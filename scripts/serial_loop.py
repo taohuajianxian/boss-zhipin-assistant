@@ -22,7 +22,7 @@
     --step read --index N    → 读第N条JD (内层循环 步骤A)
     --step decide --index N  → 执行AI决策+检查目标 (内层循环 步骤B+C)
     --step evolve        → 页面穷尽后AI评估+新关键词+导航搜索页 (外层循环)
-    --step finish        → 生成HTML汇报 + 授权状态 + 微信随喜区 (流程图: 汇总投递岗位)
+    --step finish        → 生成HTML汇报 + 授权状态 + 联系方式区 (流程图: 汇总投递岗位)
     --step status        → 查看三层循环完整进度
 
 信号文件:
@@ -158,7 +158,7 @@ def step_init(city_code=_PROFILE_CITY):
         print(f"[授权] {snap['detail']}")
         print("[授权] 拿到码后执行: python scripts/entitlement.py --activate <CODE>")
         if snap["wechat_id"]:
-            print(f"[授权] 作者微信: {snap['wechat_id']}")
+            print(f"[授权] 联系方式: {snap['wechat_id']}")
         print("[授权] init 已停止；已经在跑的流水线不会被动到。")
         return False
 
@@ -557,7 +557,7 @@ def step_decide(index):
 
         print(f"[串行] 投递结果: {status} - {detail}")
 
-        # ★ 20261113: comm_limit 先清障再复投一次——多数 comm_limit 是叠加遮罩挡住点击的假失败
+        # comm_limit 先清障再复投一次——多数 comm_limit 是叠加遮罩挡住点击的假失败
         if status == 'comm_limit':
             _cleared = handle_popup()
             _left = popup_residue()
@@ -606,7 +606,7 @@ def step_decide(index):
             step_finish()
             return True
 
-        # ★ 20261113: 单条 comm_limit 不阻断（120 是提示，150 才是硬顶，硬顶由 fatal_limit 拦）；
+        # 单条 comm_limit 不阻断（120 是提示，150 才是硬顶，硬顶由 fatal_limit 拦）；
         # deliver_inplace 已做 preflight 清障 + 清障后复投，仍连续多条 comm_limit 说明遮罩清不干净
         # 或平台真封顶，继续投只会把假失败刷满进度文件，故做连续熔断并提示人工确认。
         if status == 'comm_limit':
@@ -708,7 +708,7 @@ def step_decide(index):
 # ═══════════════════════════════════════════════════════════
 
 def step_finish():
-    """★ 流程图: 汇总投递岗位 → 生成HTML汇报（授权状态 + 微信随喜区）
+    """★ 流程图: 汇总投递岗位 → 生成HTML汇报（授权状态 + 联系方式区）
 
     终止条件达成时调用:
     - 投递目标达标
@@ -727,7 +727,7 @@ def step_finish():
         print(f"[完成] ★ 投递流程结束")
         print(f"[完成] 授权状态: {snap['title']}；{ent.activation_hint(snap)}")
         if snap["wechat_id"]:
-            print(f"[完成] 作者微信: {snap['wechat_id']}")
+            print(f"[完成] 联系方式: {snap['wechat_id']}")
 
         # 显示最终统计
         target_check = check_delivery_target(PROGRESS_FILE)
@@ -790,7 +790,7 @@ def step_status():
     print(f"免费额度    : 今天 {snap['free_used_today']}/{snap['free_limit']} 份"
           f"  首日 {snap['free_first_day']}")
     if snap["wechat_id"]:
-        print(f"作者微信    : {snap['wechat_id']}")
+        print(f"联系方式    : {snap['wechat_id']}")
 
     # 外层: 页面级
     print(f"\n┌─ 外层循环 (页面级) ──────────────────────")
@@ -917,7 +917,7 @@ def main():
     --step decide --index N        执行AI决策+检查目标
 
   终止:
-    --step finish                  生成HTML汇报 + 授权状态 + 微信随喜区
+    --step finish                  生成HTML汇报 + 授权状态 + 联系方式区
     --step status                  查看三层完整进度 + 授权状态
 
 激活（独立 CLI，不在本控制器内）:

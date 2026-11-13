@@ -6,7 +6,7 @@
   在推荐页懒加载穷尽后，一次性提取所有岗位卡片的表面信息，
   保存至缓存文件。
 
-★ v4.4 精简抓取:
+精简抓取:
   只保留7个核心字段（page_order, jobId, title, salary, salary_max_k,
   company, industry），去掉了 city(用户配置城市,通过推荐页已限定)、stage、online、
   welfare(单条最长80字)、degree、experience 等6个对AI初筛无价值的字段，
@@ -37,14 +37,14 @@ from scripts.webbridge_client import (
     SESSION, evaluate, extract_jobs, decrypt_salary, parse_salary_max,
 )
 
-# ★ v4.4 精简字段白名单 — 只保留AI初筛需要的字段
+# 精简字段白名单 — 只保留AI初筛需要的字段
 KEEP_FIELDS = ['page_order', 'jobId', 'title', 'salary', 'salary_max_k', 'company', 'industry']
 
 
 def extract_all_surface():
     """从当前推荐页提取所有岗位卡片的表面信息（精简版）
 
-    ★ v4.4 只保留7个核心字段:
+    只保留7个核心字段:
       page_order, jobId, title, salary, salary_max_k, company, industry
 
     返回:
@@ -52,7 +52,7 @@ def extract_all_surface():
     """
     print("[缓存] 开始批量提取岗位表面信息...")
 
-    # 使用 webbridge_client 的 extract_jobs 提取（内部已解密薪资）
+    # 使用 webbridge_client 的 extract_jobs 提取（已解密薪资）
     jobs = extract_jobs()
 
     # 补充计算字段
@@ -73,7 +73,7 @@ def extract_all_surface():
     for i, job in enumerate(unique_jobs):
         job['page_order'] = i
 
-    # ★ v4.4 精简字段 — 只保留白名单中的字段
+    # 精简字段 — 只保留白名单中的字段
     slim_jobs = []
     for job in unique_jobs:
         slim = {k: job.get(k, '') for k in KEEP_FIELDS}

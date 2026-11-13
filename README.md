@@ -1,4 +1,4 @@
-# boss-zhipin-deliver（通用脱敏版）
+﻿# boss-zhipin-deliver（通用脱敏版）
 
 BOSS直聘自动化投递技能包 20261113——三层循环架构（关键词进化 + 推荐页串行投递），由 AI Agent 逐条语义决策后投递，支持环境自检、断点续传、每日目标检测与 HTML 汇报。
 
@@ -35,7 +35,7 @@ python scripts/env_check.py
 
 1. 把本目录放到技能目录下（如 `<SKILL_DIR>/boss-zhipin-deliver/`）。
 2. 复制 `user_profile.example.json` 为 `user_profile.json`，至少填 `target_city`、`city_code`、`search_keywords`、`prefer`、`min_salary_k`（`user_profile.json` 属个人数据，不会随包发布；首次运行若缺失会自动从模板生成并提示填写）。
-3. 服务地址与作者微信**已预填**在 `scripts/cloud_config.json` 里，无需改动；留空则只能用随包基础版指令包、汇报页不显示微信号。
+3. 服务地址与联系方式**已预填**在 `scripts/cloud_config.json` 里，无需改动；留空则只能用随包基础版指令包、汇报页不显示联系方式。
 4. 运行环境自检：`python scripts/env_check.py`。
 5. 按 `SKILL.md` 的「执行步骤」走：`--step init` → `--step evolve` → `--step navigate-search` → `--step next-batch` → `read` / `decide` 循环 → `--step finish` 出汇报。
 6. 免费首日：装好即可直接跑，首次运行自动登记，当天可投满上限。
@@ -54,19 +54,19 @@ boss-zhipin-deliver/
 ├── user_profile.example.json    # 用户画像空模板（首次运行自动复制生成 user_profile.json）
 ├── requirements.txt             # 唯一外部依赖 certifi
 ├── dist/
-│   └── plan.json                # ★ 云端指令包（选择器 / JS / 时序）
+│   └── plan.json                # 云端指令包（选择器 / JS / 时序）
 └── scripts/
     ├── serial_loop.py           # 主编排 CLI（init/evolve/navigate-search/next-batch/read/decide/finish）
     ├── deliver_engine.py        # 投递执行引擎
     ├── jd_reader.py             # 岗位详情读取（选择器全部从指令包注入）
     ├── cloud_client.py          # 指令包缓存 / 渲染 / 云端同步
     ├── entitlement.py           # 激活码 CLI、免费额度、离线宽限
-    ├── cloud_config.json        # 服务地址与作者微信号
+    ├── cloud_config.json        # 服务地址与联系方式
     ├── surface_cache.py         # 列表卡片缓存
     ├── recommend_loader.py      # 推荐页懒加载与采集
     ├── keyword_evolver.py       # 关键词进化
     ├── profile_loader.py        # 用户画像加载 / LLM 提示词生成
-    ├── report_builder.py        # HTML 汇报生成（授权状态 + 微信区）
+    ├── report_builder.py        # HTML 汇报生成（授权状态 + 联系方式区）
     ├── qr_data.py               # 汇报页内嵌二维码数据
     ├── webbridge_client.py      # WebBridge 客户端与薪资解析
     └── env_check.py             # 环境自检

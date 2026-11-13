@@ -290,7 +290,7 @@ def print_account_guidance(match_result):
     print("★ 账户匹配检查")
     print("=" * 60)
 
-    # ★ 20261113: user_name 为空时（模板未填写）不能报"匹配"，否则首用用户会被误导
+    # user_name 为空时（模板未填写）不能报"匹配"，否则首用用户会被误导
     prof_unset = not str(match_result['expected_name'] or '').strip()
     name_show = match_result['expected_name'] or '(未填写)'
     if match_result['expected_city']:

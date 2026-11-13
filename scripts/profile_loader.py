@@ -43,7 +43,7 @@ WORK_DIR = os.environ.get("BOSS_WORK_DIR", os.getcwd())
 def _load_profile():
     """加载用户画像 JSON，返回 dict
 
-    ★ 20261113 首次使用支持：user_profile.json 不存在但存在 user_profile.example.json 时，
+    首次使用：user_profile.json 不存在但存在 user_profile.example.json 时，
     自动复制生成模板，再抛异常提示填写——不静默沿用示例城市（北京），避免投错城市。
     """
     if not os.path.exists(USER_PROFILE_FILE):

@@ -1,0 +1,61 @@
+{
+  "anchor_version": 1,
+  "updated_at": "2026-11-13T16:06:49",
+  "endpoint": {
+    "scheme": "https",
+    "host": "boss.thjx.dpdns.org",
+    "allow_paths": [
+      "/v1/plan",
+      "/v1/verify",
+      "/v1/free"
+    ],
+    "note": "端点主体固定。改动需重新发布技能包，运行期不接受静默变更。"
+  },
+  "plan": {
+    "digest_alg": "sha256",
+    "current_version": "20261113-7d518c6c",
+    "current_digest": "0f65c790c24c0d13149c84946137e316efb0bece9fcadf4343b1714d96fb1ceb",
+    "min_version_date": "20261113",
+    "require_signature": true,
+    "require_https": true,
+    "note": "需验签通过且版本日期不低于 min_version_date，拒绝回滚与降级。"
+  },
+  "js": {
+    "policy": "allowlist+digest",
+    "max_bytes": 8192,
+    "allowed_names": [
+      "click_card",
+      "extract_jobs",
+      "find_card",
+      "handle_popup",
+      "login_check",
+      "read_jd",
+      "verify_panel"
+    ],
+    "approved_snippets": {
+      "read_jd": [
+        "3153aca2386a690523b858545166b6ac5a2442a8ef7216a1cad4375390ea1308"
+      ],
+      "find_card": [
+        "8fc5f95fb6a5401026c78e35d4ec3e7b1797c9153e2e9c33e80cedadbdc48002"
+      ],
+      "click_card": [
+        "a02015680ce2067fb5e03d53e35fdeb8da9306eed498fd60bc5f00ea175c8101"
+      ],
+      "verify_panel": [
+        "4674a25fa47ead85c2d4470e9b1cec52944341a3a82874040738bf3099dc7f05"
+      ],
+      "handle_popup": [
+        "115db8268e26d6de57f1a2ec65ae73bf9476ccaff00127b7fabc24d6f9ab8b89",
+        "97dc19129d4af782f33bfeaf7e763149a98c1fe6e6e4d5f1084907679d4ff6e0"
+      ],
+      "login_check": [
+        "32e3e7fe8dc30449469ce0444fdc7787608020286299c0cda08619a599972405"
+      ],
+      "extract_jobs": [
+        "a2c4fef5c13a9558d047428fcafd13f13e259f6f45188bb3be836d4c33557038"
+      ]
+    },
+    "note": "只注入随包审查过的片段；云端出现未登记指纹的 JS 一律拒收整包。"
+  }
+}

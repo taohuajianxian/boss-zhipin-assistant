@@ -3,7 +3,7 @@
 """
 模块 E: 推荐页内原地点击卡片读右侧 JD
 
-★ 20261111 知识/执行分离改造：
+知识/执行分离：
   本文件**不再包含任何 BOSS直聘选择器字面量与内联 JS**。
   所有选择器、JS 模板、点击时序均来自云端指令包 plan.json：
       cloud_client.load_plan() → render_js(name, **选择器) → evaluate(js)

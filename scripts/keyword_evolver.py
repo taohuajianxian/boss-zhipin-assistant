@@ -289,7 +289,7 @@ def navigate_to_search(keyword, city_code=_PROFILE_CITY):
     print(f"[搜索] 导航到搜索结果页: {keyword}")
     print(f"[搜索] URL: {url}")
 
-    # ★ 20260911: 导航前先确保独立标签页（不抢用户当前页面）
+    # 导航前先确保独立标签页（不抢用户当前页面）
     if not ensure_active_tab():
         print(f"[搜索] ERROR: 无法建立独立 BOSS 标签页")
         return False, keyword

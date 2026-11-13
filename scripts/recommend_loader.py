@@ -2,7 +2,7 @@
 """
 模块 C: 推荐页导航 + 分批懒加载
 
-★ v4.4 核心改动 — 分批滚动+提取:
+核心改动 — 分批滚动+提取:
   不再一口气滚到底再提取，而是分批处理:
   1. 每批滚动加载约 BATCH_SIZE 条岗位（约2-3次滚动）
   2. 立刻增量提取本批新岗位 → append 到 surface_cache.json
@@ -11,7 +11,7 @@
 
   ★ 分批不等于批量投递 — 每批内的投递仍然严格串行（serial_loop.py 控制）
 
-★ v4.4 状态持久化 — 写死连续滚动规则:
+状态持久化 — 写死连续滚动规则:
   serial_loop.py 每批以独立 CLI 进程调用本模块，模块级 _state 会重置。
   必须将分批进度持久化到 batch_state.json，否则第二批会从 page_order=0
   重新开始，等于"第一批结束后就忘了向下还能滚动"。
@@ -66,7 +66,7 @@ RENDER_WAIT = 3           # 滚动后等待渲染秒数
 MAX_TOTAL_SCROLLS = 80    # 全局最大滚动次数（安全上限）
 STABLE_THRESHOLD = 4      # 连续 N 次无新增 → 穷尽
 
-# ★ v4.4 跨进程状态持久化文件
+# 跨进程状态持久化文件
 #   serial_loop.py 每次以独立 CLI 进程调用，模块级 _state 会重置。
 #   必须将分批进度持久化到文件，否则第二批会从 page_order=0 重新开始。
 BATCH_STATE_FILE = os.path.join(WORK_DIR, "batch_state.json")
@@ -127,7 +127,7 @@ def navigate_to_recommend(city_code=_PROFILE_CITY):
         bool: 导航是否成功
     """
     url = RECOMMEND_URL
-    # ★ 20260911: 导航前先确保独立标签页（不抢用户当前页面）
+    # 导航前先确保独立标签页（不抢用户当前页面）
     if not ensure_active_tab():
         print(f"[导航] ERROR: 无法建立独立 BOSS 标签页")
         return False
@@ -238,7 +238,7 @@ def scroll_next_batch(cache_file="surface_cache.json"):
       3. append 到缓存文件
       4. 返回本批岗位列表
 
-    ★ v4.4 跨进程安全:
+    跨进程安全:
       进入函数时先 _load_state() 恢复上一批的进度，
       确保第二批从第一批结束的 page_order 继续向下滚动。
 
@@ -256,7 +256,7 @@ def scroll_next_batch(cache_file="surface_cache.json"):
             "exhaust_reason": str,   # 穷尽原因
         }
     """
-    # ★ v4.4 跨进程恢复 — 从文件加载上一批的进度
+    # 跨进程恢复 — 从文件加载上一批的进度
     _load_state()
 
     if _state["exhausted"]:
@@ -354,7 +354,7 @@ def scroll_next_batch(cache_file="surface_cache.json"):
             _state["exhausted"] = True
             _state["exhaust_reason"] = "本批无新岗位"
 
-    # ★ v4.4 持久化 — 保存本批进度供下一批进程恢复
+    # 持久化 — 保存本批进度供下一批进程恢复
     _save_state()
 
     # ★ 提示连续滚动 — 写死规则，不让学生忘了还有下一批
@@ -378,13 +378,13 @@ def scroll_next_batch(cache_file="surface_cache.json"):
 
 def is_exhausted():
     """是否已穷尽（所有岗位都加载完了）"""
-    _load_state()  # ★ v4.4 跨进程恢复
+    _load_state()  # 跨进程恢复
     return _state["exhausted"]
 
 
 def get_state():
     """获取当前分批状态"""
-    _load_state()  # ★ v4.4 跨进程恢复
+    _load_state()  # 跨进程恢复
     return dict(_state)
 
 
@@ -398,7 +398,7 @@ def reset_state():
         "exhaust_reason": "",
         "batch_num": 0,
     })
-    _save_state()  # ★ v4.4 持久化重置后的状态
+    _save_state()  # 持久化重置后的状态
     print("[状态] 已重置分批进度 (batch_state.json 已清零)")
 
 

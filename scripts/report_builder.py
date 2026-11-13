@@ -46,7 +46,7 @@ def _esc(text):
 def _load_qr_base64(filename):
     """从 assets 目录读取二维码图片，返回 data:image 格式的 base64 字符串。
 
-    二维码属于可选的作者本地资源，不随发布包分发，缺失属正常情况：
+    二维码属于可选的本地资源，不随发布包分发，缺失属正常情况：
     直接返回空字符串，由调用方降级为「只显示微信号」，不打印警告。
     """
     filepath = os.path.join(ASSETS_DIR, filename)
@@ -67,7 +67,7 @@ def _wechat_qr():
     """返回微信二维码的 data URI。
 
     取值顺序：
-      1. 作者本机 assets/wechat_qr.jpg（存在则用，方便随时换码）；
+      1. 本机 assets/wechat_qr.jpg（存在则用，方便随时换码）；
       2. 随包的 scripts/qr_data.py 内嵌 base64（发布平台禁二进制，包里不带图片文件）。
     都取不到时返回空字符串，页面降级为只显示微信号。
     """
@@ -234,7 +234,7 @@ tr:hover td {{ background: #fafafa; }}
   </div>
 """
 
-    # 只展示微信：作者本机有 assets 图则用图，否则用随包内嵌 base64（发布包不含图片文件）
+    # 只展示微信：本机有 assets 图则用图，否则用随包内嵌 base64（发布包不含图片文件）
     wechat_qr = _wechat_qr()
     wechat_id = _esc((snap or {}).get("wechat_id") or "")
 
@@ -242,7 +242,7 @@ tr:hover td {{ background: #fafafa; }}
     <h2>继续用 / 续期</h2>
     <p>加我微信拿激活码。页面改版后新版指令包我这边会一直同步；用着有问题也可以直接问我。</p>"""
 
-    # 二维码属于作者本地资源，不随包分发（发布平台禁止二进制文件）；
+    # 二维码属于可选本地资源，不随包分发（发布平台禁止二进制文件）；
     # 有本地图片时内嵌展示，没有时只展示微信号，保持页面干净。
     if wechat_qr:
         html += f"""    <div class="tip-codes">

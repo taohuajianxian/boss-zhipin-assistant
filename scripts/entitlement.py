@@ -40,7 +40,7 @@ GRACE_HOURS = 24
 DEFAULT_FREE_LIMIT = 150
 
 # 防伪造与防复制的联网核验节奏：
-#   每 72 小时联网向作者服务器核验一次授权；连续 168 小时（7 天）都连不上才拦，
+#   每 72 小时联网向授权服务端核验一次授权；连续 168 小时（7 天）都连不上才拦，
 #   避免服务端抖动或用户断网时误伤已激活用户。
 ONLINE_CHECK_HOURS = 72
 ONLINE_FAIL_LIMIT_HOURS = 168
@@ -96,6 +96,14 @@ def _hours_since(iso: str):
         return (datetime.now() - datetime.fromisoformat(iso)).total_seconds() / 3600
     except (TypeError, ValueError):
         return None
+
+
+def _safe_endpoint() -> str:
+    """端点校验不通过时当作未配置处理，避免状态查询整体报错。"""
+    try:
+        return cc.endpoint() or ""
+    except Exception:                             # noqa: BLE001
+        return ""
 
 
 def refresh_license(license_data: dict):
@@ -159,7 +167,7 @@ def status_snapshot(start_free: bool = False) -> dict:
         "total_delivered_recorded": usage.get("total", 0),
         "plan_version": (plan or {}).get("plan_version"),
         "plan_source": source or "none",
-        "endpoint": cc.endpoint() or "",
+        "endpoint": _safe_endpoint(),
         "last_sync_at": sync.get("last_sync_at"),
         "last_ok_at": license_data.get("last_ok_at"),
         "verify_note": "",
@@ -343,7 +351,14 @@ def activate(code: str) -> int:
     if not re.fullmatch(r"[A-Z2-9]{4,8}(?:-[A-Z2-9]{4,8}){0,4}", code):
         print("激活码格式不对，应该长这样：ABCD-1234-EFGH")
         return 1
-    if not cc.endpoint():
+    try:
+        ep = cc.endpoint()
+    except Exception as e:                        # noqa: BLE001
+        print(f"服务地址未通过安全校验：{e}")
+        print("确认这就是你要连接的地址后，执行："
+              f"python scripts/cloud_client.py --accept-endpoint <URL>")
+        return 1
+    if not ep:
         print("还没配置服务地址：设置 BOSS_LICENSE_ENDPOINT，或填 scripts/cloud_config.json 的 endpoint。")
         return 1
 
@@ -396,7 +411,7 @@ def print_status(snap: dict, as_json: bool = False):
     if snap.get("verify_note"):
         print(f"核验提示  : {snap['verify_note']}")
     if snap["wechat_id"]:
-        print(f"作者微信  : {snap['wechat_id']}")
+        print(f"联系方式  : {snap['wechat_id']}")
 
 
 def main():

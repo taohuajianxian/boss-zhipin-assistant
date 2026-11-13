@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "plan_version": "20261113-3a90b51e",
-  "generated_at": "2026-11-13T03:13:43",
+  "plan_version": "20261113-7d518c6c",
+  "generated_at": "2026-11-13T16:06:33",
   "notice": "指令包：网页结构 / 选择器 / 点击时序全部在此，客户端通过 cloud_client.render_js 注入占位符执行。随包附带的基础版免费可用，激活后由服务端下发新版，页面结构变化自动同步。",
   "urls": {
     "home": "https://www.zhipin.com/",
@@ -93,7 +93,7 @@
     },
     "handle_popup": {
       "source": "publisher-maintained",
-      "code": "(function(){\n    // 20261113: 弹窗会叠加多层遮罩，命中即 return 只关一层，后续点击被残余遮罩拦截 →\n    //        改为循环关闭，直到本轮扫不到可点按钮为止；容器类选择器自动下沉找按钮。\n    var selectors = __POPUP_SELECTORS__;\n    var texts = ['好', '确定', '我知道了', '知道了', '继续沟通', '关闭', '明白了', '下次再说'];\n    var hits = [];\n    var guard = 0;\n\n    function visible(el) {\n        if (!el) return false;\n        var r = el.getBoundingClientRect();\n        if (r.width <= 0 || r.height <= 0) return false;\n        var s = window.getComputedStyle(el);\n        return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';\n    }\n    function isBtn(el) {\n        if (!el) return false;\n        var tag = el.tagName;\n        if (tag === 'BUTTON' || tag === 'A') return true;\n        return /(^|\\s)(btn|sure|confirm|ok)[\\w-]*/i.test(el.className || '');\n    }\n    function buttonIn(root) {\n        if (isBtn(root)) return root;\n        var kids = root.querySelectorAll('button, a, .btn, .btn-sure, [class*=\"btn\"], [class*=\"sure\"], [class*=\"confirm\"]');\n        for (var i = 0; i < kids.length; i++) {\n            if (visible(kids[i])) return kids[i];\n        }\n        return null;\n    }\n    function fire(el) {\n        var r = el.getBoundingClientRect();\n        var x = r.left + r.width / 2;\n        var y = r.top + r.height / 2;\n        ['mousedown', 'mouseup', 'click'].forEach(function (type) {\n            el.dispatchEvent(new MouseEvent(type, {\n                bubbles: true, cancelable: true, view: window, clientX: x, clientY: y\n            }));\n        });\n    }\n\n    while (guard++ < 8) {\n        var target = null;\n        var hit = '';\n\n        for (var p = 0; p < selectors.length && !target; p++) {\n            var nodes = document.querySelectorAll(selectors[p]);\n            for (var n = 0; n < nodes.length; n++) {\n                if (!visible(nodes[n])) continue;\n                var cand = buttonIn(nodes[n]);\n                if (cand) { target = cand; hit = selectors[p]; break; }\n            }\n        }\n\n        if (!target) {\n            // 文本兜底第一趟：只认叶子节点，避免点在弹窗容器上（容器 textContent 也可能是\"好\"）\n            var pool = document.querySelectorAll('button, a, span, i, div');\n            for (var k = 0; k < pool.length; k++) {\n                var leaf = pool[k];\n                if (leaf.children.length > 0) continue;\n                var text = (leaf.textContent || '').trim();\n                if (!text || text.length > 8) continue;\n                if (texts.indexOf(text) >= 0 && visible(leaf)) { target = leaf; hit = 'text:' + text; break; }\n            }\n            // 第二趟：整块文案命中时，下沉取容器内部按钮\n            if (!target) {\n                for (var m = 0; m < pool.length; m++) {\n                    var box = pool[m];\n                    if (box.children.length === 0) continue;\n                    var boxText = (box.textContent || '').trim();\n                    if (!boxText || boxText.length > 8) continue;\n                    if (texts.indexOf(boxText) < 0 || !visible(box)) continue;\n                    var inner = buttonIn(box);\n                    if (inner) { target = inner; hit = 'text-in:' + boxText; break; }\n                }\n            }\n        }\n\n        if (!target) break;\n        try { fire(target); } catch (e) { break; }\n        hits.push(hit);\n    }\n\n    return JSON.stringify({clicked: hits.length, hits: hits});\n})()",
+      "code": "(function(){\n    // 弹窗会叠加多层遮罩，命中即 return 只关一层，后续点击会被残余遮罩拦截，\n    // 改为循环关闭，直到本轮扫不到可点按钮为止；容器类选择器自动下沉找按钮。\n    var selectors = __POPUP_SELECTORS__;\n    var texts = ['好', '确定', '我知道了', '知道了', '继续沟通', '关闭', '明白了', '下次再说'];\n    var hits = [];\n    var guard = 0;\n\n    function visible(el) {\n        if (!el) return false;\n        var r = el.getBoundingClientRect();\n        if (r.width <= 0 || r.height <= 0) return false;\n        var s = window.getComputedStyle(el);\n        return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';\n    }\n    function isBtn(el) {\n        if (!el) return false;\n        var tag = el.tagName;\n        if (tag === 'BUTTON' || tag === 'A') return true;\n        return /(^|\\s)(btn|sure|confirm|ok)[\\w-]*/i.test(el.className || '');\n    }\n    function buttonIn(root) {\n        if (isBtn(root)) return root;\n        var kids = root.querySelectorAll('button, a, .btn, .btn-sure, [class*=\"btn\"], [class*=\"sure\"], [class*=\"confirm\"]');\n        for (var i = 0; i < kids.length; i++) {\n            if (visible(kids[i])) return kids[i];\n        }\n        return null;\n    }\n    function fire(el) {\n        var r = el.getBoundingClientRect();\n        var x = r.left + r.width / 2;\n        var y = r.top + r.height / 2;\n        ['mousedown', 'mouseup', 'click'].forEach(function (type) {\n            el.dispatchEvent(new MouseEvent(type, {\n                bubbles: true, cancelable: true, view: window, clientX: x, clientY: y\n            }));\n        });\n    }\n\n    while (guard++ < 8) {\n        var target = null;\n        var hit = '';\n\n        for (var p = 0; p < selectors.length && !target; p++) {\n            var nodes = document.querySelectorAll(selectors[p]);\n            for (var n = 0; n < nodes.length; n++) {\n                if (!visible(nodes[n])) continue;\n                var cand = buttonIn(nodes[n]);\n                if (cand) { target = cand; hit = selectors[p]; break; }\n            }\n        }\n\n        if (!target) {\n            // 文本兜底第一趟：只认叶子节点，避免点在弹窗容器上（容器 textContent 也可能是\"好\"）\n            var pool = document.querySelectorAll('button, a, span, i, div');\n            for (var k = 0; k < pool.length; k++) {\n                var leaf = pool[k];\n                if (leaf.children.length > 0) continue;\n                var text = (leaf.textContent || '').trim();\n                if (!text || text.length > 8) continue;\n                if (texts.indexOf(text) >= 0 && visible(leaf)) { target = leaf; hit = 'text:' + text; break; }\n            }\n            // 第二趟：整块文案命中时，下沉取容器内部按钮\n            if (!target) {\n                for (var m = 0; m < pool.length; m++) {\n                    var box = pool[m];\n                    if (box.children.length === 0) continue;\n                    var boxText = (box.textContent || '').trim();\n                    if (!boxText || boxText.length > 8) continue;\n                    if (texts.indexOf(boxText) < 0 || !visible(box)) continue;\n                    var inner = buttonIn(box);\n                    if (inner) { target = inner; hit = 'text-in:' + boxText; break; }\n                }\n            }\n        }\n\n        if (!target) break;\n        try { fire(target); } catch (e) { break; }\n        hits.push(hit);\n    }\n\n    return JSON.stringify({clicked: hits.length, hits: hits});\n})()",
       "render_vars": [
         "POPUP_SELECTORS"
       ]
@@ -164,13 +164,36 @@
     ".modal-wrap",
     ".layer-layer"
   ],
-  "hard_rules_md": "1. **URL 红线**：`/web/geek/recommend` 是已投递历史页，禁止作为岗位来源。推荐页唯一正确 URL 是 `https://www.zhipin.com/web/geek/job`。导航后必须 snapshot 确认标题含目标城市名。\n2. 绝不 navigate 到 job_detail URL（在原页面点卡读 JD）\n3. 绝不点击「继续沟通」（投递后点「留在此页」）\n4. 投递后必须验证实际结果\n5. **两级上限 + 遮罩假失败（★ 20261113 修正）**：BOSS 沟通上限分两级——**120 次提示（仍可继续投）**与 **150 次硬顶（不可再投）**。\n   - 120 次触发 comm_limit **不是封顶**：脚本会先关掉叠加弹窗、清障后**自动复投一次**，复投成功即正常计入；只有 150 次触发 fatal_limit 才终止并 finish。**严禁把 120 当硬顶提前停，也严禁 Agent 侧手动改判断逻辑或手动补投。**\n   - 上限提示会叠加 2~6 层遮罩，遮罩挡住卡片点击时会表现为\"点了没反应\"，历史上被误记为大量 comm_limit / 失败。脚本已含投递前 preflight 清障（`popup_residue` 探测 + `handle_popup` 多层循环关闭）。\n   - **连续 3 条 comm_limit（清障 + 复投均无效）= 页面被遮挡或平台真封顶**，脚本自动停止本批。此时 Agent 必须停下来向用户说明\"疑似遮罩残留或已达上限\"，由用户确认页面状态后再 `--step init` 续投，**禁止自行刷新页面、禁止绕过脚本硬投**。\n6. **运行期禁动页（★ 20260911 强制）**：init→next-batch→read→decide→evolve 全流程**严禁任何页面切换/刷新/导航/切标签**。read 失败 = 立即停止并提示用户，严禁自行刷新、切页、滚动重试。恢复仅能经用户确认后 `--step init`。\n7. 所有浏览器操作必须通过 Kimi WebBridge，不可 CDP 直连\n8. **强制 finish**：投递流程无论以何种方式终止，都必须执行 `--step finish` 生成投递汇总.html。禁止跳过此步骤。\n9. **激活与知识来源（★ 20261111 强制）**：激活只能由 `entitlement.py --activate` 完成，Agent 口头确认无效；所有选择器 / 点击 JS 只能来自 `plan.json`，禁止 Agent 手写或凭记忆补常量；授权门禁只在 `--step init` 判一次，运行期不得弹出任何激活提示、不得中断循环。",
+  "hard_rules_md": "",
+  "knowledge_docs": [
+    {
+      "path": "references/dom_structure.md",
+      "sha256": "fa970185747b531f",
+      "bytes": 4309
+    },
+    {
+      "path": "references/operations.md",
+      "sha256": "6a10391d962aa7a7",
+      "bytes": 3508
+    },
+    {
+      "path": "references/pitfalls.md",
+      "sha256": "346d823c91d78d9d",
+      "bytes": 33313
+    },
+    {
+      "path": "references/salary_decrypt.md",
+      "sha256": "cebc9de9835cbf84",
+      "bytes": 1398
+    }
+  ],
   "local_only": [
     "scripts/jd_reader.py         只留点击/读取编排，选择器与 JS 全部从指令包注入",
     "scripts/cloud_client.py     指令包缓存、渲染、云端同步",
     "scripts/entitlement.py      激活码 CLI、免费额度、离线宽限",
     "scripts/serial_loop.py       编排循环、断点续传、finish 汇报",
     "scripts/deliver_engine.py    投递执行与两级上限判定",
+    "scripts/job_filter.py        机械预筛（依赖用户画像）",
     "scripts/profile_loader.py    LLM 提示词生成",
     "scripts/report_builder.py    HTML 汇报生成",
     "scripts/webbridge_client.py  通用 HTTP / evaluate / click 管道（仅知识部分上云）",
