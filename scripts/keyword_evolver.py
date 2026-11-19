@@ -119,11 +119,21 @@ def evaluate_page_results():
 
     delivered = getattr(pm, 'delivered', [])
     total_delivered = len(delivered)
+    # ★ 统一口径（P1 修复）：累计成功数以统一台账 stats_core 为准，
+    #   旧逻辑只读 stream_progress.delivered 列表，evolve 因此报「累计投递 0 份」
+    try:
+        from scripts import stats_core as _sc
+        _st = _sc.compute()
+        total_delivered = int(_st["cumulative"]["success"])
+    except Exception as _e:
+        print(f"[进化] 警告: stats_core 不可用({_e})，回退 stream_progress 计数")
 
     # 本页面的投递（从 page_start_delivered 到现在）
     page_start = state.get('page_start_delivered', 0)
     page_delivered_jobs = delivered[page_start:]
     page_delivered_count = len(page_delivered_jobs)
+    if not delivered and total_delivered:
+        page_delivered_count = max(0, total_delivered - int(page_start or 0))
 
     print(f"\n[进化] ═══ 本页面投递结果评估 ═══")
     print(f"[进化] 本页面投递成功: {page_delivered_count} 份")
@@ -326,6 +336,15 @@ def navigate_to_search(keyword, city_code=_PROFILE_CITY):
             return False, keyword
 
         print(f"[搜索] 搜索结果页已加载，初始卡片数: {card_count}")
+        # P1 统一口径：换页成功即刷新本页起点（否则 page_delivered 恒等于累计总数）
+        try:
+            from scripts import stats_core as _sc_nav
+            _st_nav = load_page_state()
+            _st_nav['page_start_delivered'] = int(_sc_nav.compute()['cumulative']['success'])
+            _st_nav['page_delivered_count'] = 0
+            save_page_state(_st_nav)
+        except Exception:
+            pass
         return True, keyword
 
     except (json.JSONDecodeError, TypeError):
@@ -352,7 +371,13 @@ def start_new_page(keyword=None, city_code=_PROFILE_CITY):
     # 记录本页面开始时的累计投递数
     pm = ProgressManager(PROGRESS_FILE)
     pm.load()
-    state['page_start_delivered'] = len(getattr(pm, 'delivered', []))
+    # P1 统一口径：起点以 stats_core 累计成功数为准
+    try:
+        from scripts import stats_core as _sc_base
+        _base0 = int(_sc_base.compute()['cumulative']['success'])
+    except Exception:
+        _base0 = len(getattr(pm, 'delivered', []))
+    state['page_start_delivered'] = _base0
     state['page_delivered_count'] = 0
 
     if keyword is None:
@@ -372,6 +397,9 @@ def start_new_page(keyword=None, city_code=_PROFILE_CITY):
         if ok:
             mark_keyword_tried(clean_kw)
         state = load_page_state()
+        # 导航后重新 load 会丢掉上面在旧 state 上的赋值，这里补回起点计数
+        state['page_start_delivered'] = _base0
+        state['page_delivered_count'] = 0
         state['pages_processed'] = state.get('pages_processed', 0) + 1
         save_page_state(state)
 

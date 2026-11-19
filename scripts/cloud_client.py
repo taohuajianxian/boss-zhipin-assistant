@@ -64,7 +64,33 @@ TRUST_FILE = SKILL_DIR / "dist" / "trust_anchor.json"
 
 GRACE_HOURS = 24
 TIMEOUT = 8
-SKILL_VERSION = "20261115"   # 与 skill.md 的 version 保持一致，仅用于 User-Agent
+AUTO_SYNC_TIMEOUT = 3        # 启动静默补同步用的短超时，超时即放弃、绝不拖慢启动
+
+
+def _skill_version() -> str:
+    """从 SKILL.md 的 version 字段派生（26.11.19 → 20261119）。
+
+    2026-11-19 起改为运行时提取：此前这里写死 "20261115"，SKILL.md 升到
+    26.11.19 后两侧不一致，与 build_release / sync_github 的硬编码属同类问题。
+    """
+    try:
+        for line in (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("version:"):
+                raw = line.split(":", 1)[1].strip().strip("'\"").lstrip("vV")
+                parts = [p for p in raw.split(".") if p.strip().isdigit()]
+                if len(parts) == 3:                        # 26.11.19 → 20261119
+                    y, m, d = parts
+                    y = y if len(y) == 4 else "20" + y
+                    return f"{y}{int(m):02d}{int(d):02d}"
+                digits = "".join(ch for ch in raw if ch.isdigit())
+                if digits:
+                    return digits
+    except Exception:
+        pass
+    return "unknown"
+
+
+SKILL_VERSION = _skill_version()   # 仅用于 User-Agent，随 SKILL.md 自动更新
 SIG_ALG = "HMAC-SHA256"
 
 
@@ -311,7 +337,7 @@ def _ua() -> str:
     return f"BossDeliver/{SKILL_VERSION} (+https://boss.thjx.dpdns.org)"
 
 
-def _http(url, payload=None):
+def _http(url, payload=None, timeout=None):
     """返回 (status, dict_or_text)。网络异常统一返回 (0, 原因字符串)。"""
     base_headers = {"Accept": "application/json", "User-Agent": _ua()}
     try:
@@ -324,7 +350,7 @@ def _http(url, payload=None):
                 headers={**base_headers, "Content-Type": "application/json"},
                 method="POST",
             )
-        with _OPENER.open(req, timeout=TIMEOUT) as resp:
+        with _OPENER.open(req, timeout=timeout or TIMEOUT) as resp:
             body = resp.read().decode("utf-8", "replace")
             return resp.status, json.loads(body)
     except HTTPError as e:
@@ -337,7 +363,7 @@ def _http(url, payload=None):
         return 0, {"error": f"网络不可达: {e}"}
 
 
-def verify(code: str, device: str = None):
+def verify(code: str, device: str = None, timeout=None):
     """POST /v1/verify。返回 (status, obj)。"""
     try:
         ep = endpoint()
@@ -345,7 +371,7 @@ def verify(code: str, device: str = None):
         return 0, {"error": str(e)}
     if not ep:
         return 0, {"error": "未配置服务地址（BOSS_LICENSE_ENDPOINT 或 scripts/cloud_config.json）"}
-    return _http(f"{ep}/v1/verify", {"code": code, "device": device or device_id()})
+    return _http(f"{ep}/v1/verify", {"code": code, "device": device or device_id()}, timeout=timeout)
 
 
 def free_signin(device: str = None):
@@ -457,9 +483,9 @@ def check_version_floor(plan: dict) -> None:
             f"指令包版本 {plan.get('plan_version')} 早于随包要求的最低版本 {floor}，已拒绝回滚")
 
 
-def _refresh_plan_key(code: str, device: str) -> bool:
+def _refresh_plan_key(code: str, device: str, timeout=None) -> bool:
     """老版授权文件里没有验签密钥时，联网向服务端补领一次（/v1/verify 会下发）。"""
-    status, obj = verify(code, device)
+    status, obj = verify(code, device, timeout)
     if status != 200 or not isinstance(obj, dict) or not obj.get("ok"):
         return False
     key = ((obj.get("license") or {}).get("plan_key") or "").strip()
@@ -472,7 +498,7 @@ def _refresh_plan_key(code: str, device: str) -> bool:
     return True
 
 
-def sync_plan(code: str = None, device: str = None):
+def sync_plan(code: str = None, device: str = None, timeout=None):
     """GET /v1/plan，通过完整性校验后写入本地缓存与同步凭证。
 
     成功 {"ok":True,...}；任何校验失败都返回 {"ok":False,"reason":...} 且不改动现有缓存。
@@ -491,7 +517,7 @@ def sync_plan(code: str = None, device: str = None):
     device = device or device_id()
 
     status, obj = _http(
-        f"{ep}/v1/plan?code={quote(code)}&device={quote(device)}")
+        f"{ep}/v1/plan?code={quote(code)}&device={quote(device)}", timeout=timeout)
     if status != 200 or not isinstance(obj, dict):
         reason = (obj or {}).get("error", f"HTTP {status}") if isinstance(obj, dict) else f"HTTP {status}"
         return {"ok": False, "reason": reason}
@@ -508,7 +534,7 @@ def sync_plan(code: str = None, device: str = None):
     # 2) 签名与摘要
     try:
         if not plan_key() and code:
-            _refresh_plan_key(code, device)      # 老授权文件补领验签密钥
+            _refresh_plan_key(code, device, timeout)      # 老授权文件补领验签密钥
         verify_integrity(plan, integrity, ep)
         # 3) 版本回滚
         check_version_floor(plan)
@@ -541,6 +567,59 @@ def sync_plan(code: str = None, device: str = None):
             "digest": digest[:16],
             "selectors": sum(len(v) for v in plan.get("selectors", {}).values()),
             "js_snippets": len(plan.get("js_snippets", {}))}
+
+
+def auto_sync_if_stale(max_age_hours: float = None, timeout: float = None) -> dict:
+    """启动时静默补一次云端同步，让用户不必再手动 --sync。
+
+    设计约束（2026-11-19 加入）：
+      - 只在「已激活」且「距上次同步/尝试超过 max_age_hours」时发请求；
+        未激活用户不产生任何网络请求。
+      - 用 AUTO_SYNC_TIMEOUT 短超时；断网、DNS 失败、服务端异常、校验不过
+        等任何情况都吞掉并返回，绝不抛给调用方、绝不阻断投递主流程。
+      - 失败同样写入 last_auto_attempt_at 做节流，避免每次启动都空等满超时。
+      - 与 dist 信任锚、签名、防回滚校验完全复用 sync_plan，不新增放行路径。
+
+    返回 {"attempted","synced","changed","from","to","reason"}。
+    """
+    hours_limit = GRACE_HOURS if max_age_hours is None else float(max_age_hours)
+    out = {"attempted": False, "synced": False, "changed": False,
+           "from": None, "to": None, "reason": ""}
+    try:
+        lic = _read_json(LICENSE_FILE, {}) or {}
+        if not str(lic.get("code") or "").strip():
+            out["reason"] = "未激活，跳过自动同步"
+            return out
+
+        info = _read_json(SYNC_FILE, {}) or {}
+        stamps = [x for x in (info.get("last_sync_at"), info.get("last_auto_attempt_at")) if x]
+        if stamps:
+            try:
+                gap = (datetime.now() - datetime.fromisoformat(max(stamps))).total_seconds() / 3600
+                if gap < hours_limit:
+                    out["reason"] = f"距上次同步 {gap:.1f}h，未满 {hours_limit:g}h"
+                    return out
+            except ValueError:
+                pass
+
+        out["attempted"] = True
+        before = str(info.get("plan_version") or "")
+        res = sync_plan(timeout=timeout or AUTO_SYNC_TIMEOUT)
+
+        fresh = _read_json(SYNC_FILE, {}) or {}
+        fresh["last_auto_attempt_at"] = datetime.now().isoformat(timespec="seconds")
+        _write_json(SYNC_FILE, fresh)
+
+        if res.get("ok"):
+            out["synced"] = True
+            out["from"] = before or None
+            out["to"] = str(res.get("plan_version") or "")
+            out["changed"] = bool(before) and before != out["to"]
+        else:
+            out["reason"] = str(res.get("reason") or "同步失败")
+    except Exception as e:                     # 兜底：任何意外都不得影响主流程
+        out["reason"] = f"{type(e).__name__}: {e}"
+    return out
 
 
 def sync_status() -> dict:

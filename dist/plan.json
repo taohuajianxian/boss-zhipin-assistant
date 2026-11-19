@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "plan_version": "20261113-7d518c6c",
-  "generated_at": "2026-11-13T16:06:33",
+  "plan_version": "20261119-c523b58b",
+  "generated_at": "2026-11-19T04:11:13",
   "notice": "指令包：网页结构 / 选择器 / 点击时序全部在此，客户端通过 cloud_client.render_js 注入占位符执行。随包附带的基础版免费可用，激活后由服务端下发新版，页面结构变化自动同步。",
   "urls": {
     "home": "https://www.zhipin.com/",
@@ -173,13 +173,13 @@
     },
     {
       "path": "references/operations.md",
-      "sha256": "6a10391d962aa7a7",
-      "bytes": 3508
+      "sha256": "5c06d14df3a7a098",
+      "bytes": 4515
     },
     {
       "path": "references/pitfalls.md",
-      "sha256": "346d823c91d78d9d",
-      "bytes": 33313
+      "sha256": "7b9591cb3dedc265",
+      "bytes": 41962
     },
     {
       "path": "references/salary_decrypt.md",

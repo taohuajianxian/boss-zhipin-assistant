@@ -99,18 +99,37 @@ def build_report(progress_file="stream_progress.json", output_path="投递汇总
     返回:
         output_path (str) 或 None (失败时)
     """
-    if not os.path.exists(progress_file):
-        print(f"进度文件不存在: {progress_file}")
-        return None
+    # ★ 统一统计口径：优先用 stats_core（serial_progress + stream_progress 按 jobId 去重）
+    #   保证 HTML 数字与 --step status 完全一致，杜绝"两套数字"
+    delivered = failed = None
+    _stats = None
+    try:
+        from scripts import stats_core
+        delivered, failed, _stats = stats_core.report_payload()
+    except Exception as _e:
+        delivered = None
 
-    with open(progress_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    if delivered is None:
+        # 兜底：仅读单一进度文件（旧行为）
+        if not os.path.exists(progress_file):
+            print(f"进度文件不存在: {progress_file}")
+            return None
+        with open(progress_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        delivered = data.get('delivered', [])
+        failed = data.get('failed', [])
 
-    delivered = data.get('delivered', [])
-    failed = data.get('failed', [])
+    for _j in delivered:
+        _j.setdefault('result', _j.get('detail') or 'success')
 
     total_delivered = len(delivered)
     total_failed = len(failed)
+
+    session_note = ""
+    if _stats and _stats.get("session_available"):
+        _s, _c = _stats["session"], _stats["cumulative"]
+        session_note = (f"本次会话投递 {_s['success']} 份 · "
+                        f"排除不匹配 {_s['rejected']} 份 · 累计去重 {_c['success']} 份")
 
     # 按行业分组
     industry_groups = {}
@@ -140,6 +159,7 @@ body {{ font-family: -apple-system, "Noto Sans CJK SC", "Microsoft YaHei", sans-
 .stat-card .num {{ font-size: 32px; font-weight: bold; color: #00b38a; }}
 .stat-card .label {{ font-size: 13px; color: #888; margin-top: 4px; }}
 .stat-card.fail .num {{ color: #e74c3c; }}
+.note {{ font-size: 13px; color: #666; margin: 12px 0 0; }}
 .section {{ background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
 .section h2 {{ font-size: 18px; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 2px solid #f0f0f0; }}
 table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
@@ -182,10 +202,11 @@ tr:hover td {{ background: #fafafa; }}
     <div class="subtitle">生成时间: {now}</div>
   </div>
   <div class="stats">
-    <div class="stat-card"><div class="num">{total_delivered}</div><div class="label">成功投递</div></div>
+    <div class="stat-card"><div class="num">{total_delivered}</div><div class="label">成功投递（累计去重）</div></div>
     <div class="stat-card fail"><div class="num">{total_failed}</div><div class="label">投递失败</div></div>
     <div class="stat-card"><div class="num">{len(industry_groups)}</div><div class="label">覆盖行业</div></div>
   </div>
+  {f'<p class="note">{session_note}</p>' if session_note else ''}
   <div class="section">
     <h2>投递明细</h2>
 """

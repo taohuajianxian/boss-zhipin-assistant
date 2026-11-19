@@ -38,7 +38,7 @@ from scripts.webbridge_client import (
 )
 
 # 精简字段白名单 — 只保留AI初筛需要的字段
-KEEP_FIELDS = ['page_order', 'jobId', 'title', 'salary', 'salary_max_k', 'company', 'industry']
+KEEP_FIELDS = ['page_order', 'jobId', 'title', 'salary', 'salary_max_k', 'company', 'industry', 'city']
 
 
 def extract_all_surface():

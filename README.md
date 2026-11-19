@@ -37,7 +37,7 @@ python scripts/env_check.py
 4. 运行环境自检：`python scripts/env_check.py`。
 5. 按 `SKILL.md` 的「执行步骤」走：`--step init` → `--step evolve` → `--step navigate-search` → `--step next-batch` → `read` / `decide` 循环 → `--step finish` 出汇报。
 6. 免费首日：装好即可直接跑，首次运行自动登记，当天可投满上限。
-7. 拿到激活码后，**必须**执行 `python scripts/entitlement.py --activate <CODE>`（Agent 口头确认无效）；`--status` 看授权，`python scripts/cloud_client.py --sync` 手动同步指令包。
+7. 拿到激活码后，**必须**执行 `python scripts/entitlement.py --activate <CODE>`（Agent 口头确认无效）；`--status` 看授权。指令包不用手动同步：每次启动会自动补一次（已激活用户 24 小时内最多一次，失败静默沿用本地版本），只有需要立刻强制刷新时才用 `python scripts/cloud_client.py --sync`。
 
 > 城市码可在 BOSS直聘城市页 URL 中取得（形如 `101010100` = 北京）。
 
@@ -104,3 +104,4 @@ boss-zhipin-deliver/
 6. **知识来源只认指令包**：选择器与点击 JS 一律从 `plan.json` 注入，禁止手写；页面结构变化后新版指令包会自动下发，用户端无需任何操作。
 7. **授权文件不可手改**：`license.json` 带服务端签名并与设备指纹绑定——手改到期日会在本地验签阶段判「授权文件被改动过」，拷到别的电脑会判「已绑定其他设备」；免费资格记在服务端，删本地 `usage.json` 不会重置免费期。
 8. **合规自担**：自动化投递存在被平台风控的风险，使用前请自行评估；本包仅提供技术实现，不承诺投递效果与账号安全。
+9. **风控即停**：页面一旦出现「访问受限 / 异常行为 / 验证码 / 人机验证」等字样或跳转验证页，脚本**立即停机**并记录 `stop_reason=risk_control`，**不重试、不清障复投、不换关键词绕过**；停机后除 `status`/`finish` 外所有步骤拒绝执行，须人工完成验证后 `python scripts/serial_loop.py --step init --ack-risk` 放行。其余停机原因码见 `SKILL.md`。

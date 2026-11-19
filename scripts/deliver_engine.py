@@ -45,6 +45,13 @@ from scripts.webbridge_client import (
     ProgressManager, register_signal_guard, SafeInterrupt,
 )
 from scripts.jd_reader import click_card_inplace
+# P0-1: 风控字样词表集中定义在 stop_codes，本引擎只负责检测与上报
+from scripts.stop_codes import (
+    RISK_STRONG_PATTERNS,
+    RISK_WEAK_PATTERNS,
+    RISK_WEAK_STREAK_LIMIT,
+    risk_scan,
+)
 
 # ═══════════════════════════════════════════════════════════
 # 投递目标常量 — 从 user_profile.json 读取 (profile_loader 导入)
@@ -95,6 +102,41 @@ SKIP_PATTERNS = [
 MAX_CONSECUTIVE_UNKNOWN = 3
 # 连续 N 条 comm_limit 判定为"页面被遮罩挡住"或"平台真封顶"，停止本批待人工确认
 MAX_CONSECUTIVE_COMM = 3
+# 连续 N 条页面结构失败（按钮丢失/卡片定位失败）判定为 BOSS 改版
+MAX_CONSECUTIVE_SELECTOR = 3
+
+# ═══════════════════════════════════════════════════════════
+# P0-1 风控字样检测 — 命中即停机（stop_reason=risk_control）
+# ═══════════════════════════════════════════════════════════
+# 词表见 scripts/stop_codes.py：强词单次命中即停，弱词连续 2 次命中才停。
+# 风控优先于上限/跳过检测：风控页文案常同时含"安全验证""沟通上限"等字，
+# 若先判上限会被误记成 comm_limit → 触发清障复投 → 越投越黑。
+_RISK_WEAK_STREAK = 0
+
+
+def check_risk_control(page_text):
+    """检测页面文本中的风控字样
+
+    返回:
+        (hit, level, detail)
+        hit: bool 是否判定为风控拦截
+        level: 'strong' | 'weak' | ''
+        detail: 命中说明（含命中词）
+    """
+    global _RISK_WEAK_STREAK
+    level, pattern = risk_scan(page_text)
+    if level == 'strong':
+        _RISK_WEAK_STREAK = 0
+        return True, 'strong', f"风控字样命中: {pattern}"
+    if level == 'weak':
+        _RISK_WEAK_STREAK += 1
+        if _RISK_WEAK_STREAK >= RISK_WEAK_STREAK_LIMIT:
+            streak = _RISK_WEAK_STREAK
+            _RISK_WEAK_STREAK = 0
+            return True, 'weak', f"风控弱字样连续{streak}次命中: {pattern}"
+        return False, 'weak', f"风控弱字样命中1次: {pattern}(未定级停机)"
+    _RISK_WEAK_STREAK = 0
+    return False, '', ''
 
 
 # ═══════════════════════════════════════════════════════════
@@ -120,10 +162,18 @@ def check_delivery_target(progress_file=None):
     if progress_file is None:
         progress_file = os.path.join(WORK_DIR, "stream_progress.json")
 
-    pm = ProgressManager(progress_file)
-    pm.load()
-
-    delivered_count = getattr(pm, 'delivered_count', 0) or len(getattr(pm, 'delivered', []))
+    # ★ 统一口径：与 --step status、投递汇总.html 共用 stats_core（jobId 去重）
+    delivered_count = None
+    try:
+        from scripts import stats_core
+        _st = stats_core.compute()
+        delivered_count = _st["cumulative"]["success"]
+    except Exception:
+        delivered_count = None
+    if delivered_count is None:  # 兜底：旧逻辑（无 stats_core 时）
+        pm = ProgressManager(progress_file)
+        pm.load()
+        delivered_count = getattr(pm, 'delivered_count', 0) or len(getattr(pm, 'delivered', []))
     target_met = delivered_count >= DAILY_TARGET
     remaining = max(0, DAILY_TARGET - delivered_count)
 
@@ -143,6 +193,80 @@ def check_delivery_target(progress_file=None):
 # ═══════════════════════════════════════════════════════════
 # 弹窗处理
 # ═══════════════════════════════════════════════════════════
+
+# 招呼送达强证据：出现这些文案即代表 BOSS 已收到招呼
+# 「已向BOSS发送消息」= 发送成功的确认弹窗标题
+# 「如需修改打招呼内容」= 该确认弹窗的固定提示句（招呼语设置引导）
+_GREET_PROOF_KEYWORDS = (
+    '已向BOSS发送消息',
+    '已向Boss发送消息',
+    '已向boss发送消息',
+    '如需修改打招呼内容',
+)
+# 弱证据：只证明招呼弹窗出现过，不证明已送达
+_GREET_WEAK_KEYWORDS = ('自我介绍一下', '打招呼内容', '发送招呼')
+
+
+def _text_snippet(text, keyword, span=120):
+    """截取关键词周边文本，供落库留证
+
+    以关键词为锚点向后取为主、向前只留少量上下文：
+    body.innerText 里混有导航/推荐链接等噪音，向前取多会污染证据片段。
+    """
+    if not text or not keyword:
+        return ''
+    idx = text.find(keyword)
+    if idx < 0:
+        return ''
+    start = max(0, idx - 20)
+    end = min(len(text), idx + len(keyword) + span)
+    return text[start:end].replace('\n', ' ').strip()
+
+
+def grab_greet_evidence():
+    """抓取打招呼弹窗证据文本
+
+    BOSS 投递成功后原地弹出确认弹窗，含招呼语正文 +
+    「如需修改打招呼内容，请在【消息通知-设置招呼语】页面修改」提示。
+    识别到该弹窗即视为招呼已发送成功，无需进入沟通列表核验。
+
+    返回:
+        {'matched': bool, 'kind': str, 'snippet': str}
+        matched=True 表示已拿到送达强证据
+    """
+    text = evaluate("""
+    (function(){
+        var texts = [];
+        var sels = '.dialog-wrap, .greet-pop, .dialog-container, .layer-dialog, ' +
+                   '.ant-modal-wrap, .dialog-body, .dialog-content, .pop-content, ' +
+                   '.tips-content, .toast, .message, .ant-message, .greet-msg';
+        var nodes = document.querySelectorAll(sels);
+        for (var i = 0; i < nodes.length; i++) {
+            var d = nodes[i];
+            var rect = d.getBoundingClientRect();
+            var style = window.getComputedStyle(d);
+            if (rect.width > 0 && rect.height > 0 && style.display !== 'none'
+                && style.visibility !== 'hidden') {
+                texts.push(d.innerText || '');
+            }
+        }
+        texts.push(document.body ? (document.body.innerText || '') : '');
+        return texts.join('\\n').substring(0, 4000);
+    })()
+    """) or ""
+
+    flat = text.replace('\r', ' ').replace('\n', ' ')
+
+    for kw in _GREET_PROOF_KEYWORDS:
+        if kw in flat:
+            return {'matched': True, 'kind': kw, 'snippet': _text_snippet(flat, kw)}
+
+    for kw in _GREET_WEAK_KEYWORDS:
+        if kw in flat:
+            return {'matched': False, 'kind': f'weak:{kw}', 'snippet': _text_snippet(flat, kw)}
+
+    return {'matched': False, 'kind': '', 'snippet': ''}
+
 
 def handle_greet_popup():
     """处理打招呼弹窗，点击"发送"按钮完成投递
@@ -264,8 +388,17 @@ def _check_fatal_patterns():
     """) or ""
 
     current_url = evaluate("window.location.href") or ""
+    _url_low = current_url.lower()
+    # 风控跳转页优先：passport/verify 类页面同时含 login 字样，先判风控再判登录
+    if any(k in _url_low for k in ('captcha', 'verify', 'safe-check', 'security-check')):
+        return 'risk_control', f"风控拦截(URL跳转验证页): {current_url[:80]}"
     if "login" in current_url or "passport" in current_url:
         return 'login_expired', f"页面跳转登录: {current_url[:80]}"
+
+    # ★ P0-1 风控字样立即停：命中即返回，绝不进入后续清障/复投流程
+    risk_hit, risk_level, risk_detail = check_risk_control(page_text)
+    if risk_hit:
+        return 'risk_control', f"{risk_detail}[{risk_level}]"
 
     # 两级上限精确区分
     #   120次: "您今天已与120/120位BOSS沟通过" — 仅提示，仍可继续投递
@@ -338,7 +471,12 @@ def deliver_inplace(job_id, job_info=None):
 
     返回:
         (status, detail)
-        status: 'success' | 'fatal_limit' | 'login_expired' | 'skip' | 'fail' | 'unknown'
+        status: 'success' | 'fatal_limit' | 'comm_limit' | 'risk_control'
+                | 'login_expired' | 'skip' | 'selector_broken' | 'fail' | 'unknown'
+
+        risk_control    : 页面命中风控字样/验证页，调用方必须立即停机，禁止任何重试
+        selector_broken : 卡片或沟通按钮持续定位失败，疑似 BOSS 改版
+        fail            : 遮罩残留等可重试类失败
     """
     title = (job_info or {}).get('title', '')[:25] if job_info else job_id
 
@@ -362,7 +500,7 @@ def deliver_inplace(job_id, job_info=None):
     # 1. 点击卡片
     click_result = click_card_inplace(job_id, verify=True, max_wait=5)
     if not click_result["ok"]:
-        return 'fail', f"卡片定位失败: {click_result['detail']}"
+        return 'selector_broken', f"卡片定位失败: {click_result['detail']}"
 
     time.sleep(1)
 
@@ -384,9 +522,13 @@ def deliver_inplace(job_id, job_info=None):
 
     if scroll_result == 'not_found':
         body_text = evaluate("document.body.innerText") or ""
+        # 按钮未找到先排风控：遮罩式风控会让按钮"凭空消失"，不能当改版处理
+        risk_hit, risk_level, risk_detail = check_risk_control(body_text)
+        if risk_hit:
+            return 'risk_control', f"{risk_detail}[{risk_level}]"
         if any(p in body_text for p in ['职位已关闭', '职位不存在', '已下线']):
             return 'skip', '职位已关闭/下线'
-        return 'fail', '沟通按钮未找到'
+        return 'selector_broken', '沟通按钮未找到'
 
     time.sleep(0.5)
 
@@ -401,7 +543,7 @@ def deliver_inplace(job_id, job_info=None):
     """)
 
     if click_result == 'not_found':
-        return 'fail', '点击时按钮消失'
+        return 'selector_broken', '点击时按钮消失'
 
     # 3. 等待弹窗 → 检测致命错误
     time.sleep(2)
@@ -409,12 +551,36 @@ def deliver_inplace(job_id, job_info=None):
     if fatal_status:
         return fatal_status, fatal_detail
 
-    # 4. 处理打招呼弹窗
+    # 4. 处理打招呼弹窗（口径：识别到「已向BOSS发送消息」弹窗即招呼已送达）
+    pre_ev = grab_greet_evidence()          # 点发送前：弹窗可能已带招呼语正文
     popup = handle_greet_popup()
     sent_greeting = (popup != 'no_popup')
 
+    # 弹窗会被后续操作关掉，点发送后立即抢抓一次，再等页面稳定抓第二次
+    post_ev = grab_greet_evidence()
     if sent_greeting:
         time.sleep(1.5)
+        if not post_ev.get('matched'):
+            post_ev2 = grab_greet_evidence()
+            if post_ev2.get('matched') or not post_ev.get('kind'):
+                post_ev = post_ev2
+
+    # 取证据优先级：发送后强证据 > 发送前强证据 > 发送后弱证据
+    greet_ev = {'matched': False, 'kind': '', 'snippet': ''}
+    for cand in (post_ev, pre_ev):
+        if cand and cand.get('matched'):
+            greet_ev = cand
+            break
+    else:
+        if post_ev and post_ev.get('kind'):
+            greet_ev = post_ev
+
+    greet_verified = bool(greet_ev.get('matched'))
+    greet_tag = f"证据:{greet_ev['kind']}" if greet_verified else (
+        f"弱证据:{greet_ev['kind']}" if greet_ev.get('kind') else '无弹窗证据')
+    if greet_ev.get('snippet'):
+        greet_tag += f"|{greet_ev['snippet'][:80]}"
+
 
     # 5. 点击「留在此页」
     stay_result = click_stay_on_page()
@@ -434,21 +600,26 @@ def deliver_inplace(job_id, job_info=None):
     btn_text = _get_chat_button_text()
 
     # 7. 综合判断
+    # 判定口径（用户确认）：识别到「已向BOSS发送消息」弹窗 = 招呼已送达 = 投递成功，
+    # 不需要进入沟通列表核验，沟通列表不作为成功判定依据。
+    if greet_verified:
+        return 'success', f'投递成功(已发送招呼|{greet_tag})'
+
     if '继续沟通' in btn_text:
-        return 'success', '投递成功(按钮已变为继续沟通)'
+        return 'success', f'投递成功(按钮已变为继续沟通|{greet_tag})'
 
     if sent_greeting and stayed_on_page:
-        return 'success', '投递成功(发送招呼+留在此页)'
+        return 'success', f'投递成功(发送招呼+留在此页|{greet_tag})'
 
     if sent_greeting:
-        return 'success', '投递成功(已发送招呼)'
+        return 'success', f'投递成功(已点击发送招呼|{greet_tag})'
 
     # "留在此页"被点击本身就是投递成功的强证据
     # "留在此页"按钮只在招呼语发送成功后的确认弹窗中出现
     if stayed_on_page:
-        return 'success', '投递成功(留在此页已点击,招呼弹窗可能自动发送)'
+        return 'success', f'投递成功(留在此页已点击,招呼弹窗可能自动发送|{greet_tag})'
 
-    return 'unknown', f'未确认成功: popup={popup}, stay={stay_result}, btn={btn_text[:20]}'
+    return 'unknown', f'未确认成功: popup={popup}, stay={stay_result}, btn={btn_text[:20]}, greet={greet_tag}'
 
 
 # ═══════════════════════════════════════════════════════════

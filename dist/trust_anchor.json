@@ -1,6 +1,6 @@
 {
   "anchor_version": 1,
-  "updated_at": "2026-11-13T16:06:49",
+  "updated_at": "2026-11-19T04:11:20",
   "endpoint": {
     "scheme": "https",
     "host": "boss.thjx.dpdns.org",
@@ -13,9 +13,9 @@
   },
   "plan": {
     "digest_alg": "sha256",
-    "current_version": "20261113-7d518c6c",
-    "current_digest": "0f65c790c24c0d13149c84946137e316efb0bece9fcadf4343b1714d96fb1ceb",
-    "min_version_date": "20261113",
+    "current_version": "20261119-c523b58b",
+    "current_digest": "8039cf7509857091cf402bfda00e9a5f573c2f44148d2ef3bec8aa2a67232d36",
+    "min_version_date": "20261119",
     "require_signature": true,
     "require_https": true,
     "note": "需验签通过且版本日期不低于 min_version_date，拒绝回滚与降级。"

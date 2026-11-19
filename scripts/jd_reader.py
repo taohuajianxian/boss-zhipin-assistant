@@ -36,6 +36,7 @@ sys.path.insert(0, SKILL_DIR)
 
 from scripts import cloud_client as cc
 from scripts.webbridge_client import evaluate, decrypt_salary
+from scripts.stop_codes import risk_scan
 
 
 # ═══════════════════════════════════════════════════════════
@@ -178,19 +179,37 @@ def read_jd_from_panel():
         return dict(EMPTY_JD)
 
 
+def _risk_of_jd(jd):
+    """P0-1：JD 页面文本风控扫描
+    返回 (hit, detail)；强字样（访问受限/验证码/人机验证…）即视为风控拦截。
+    """
+    text = " ".join(str(jd.get(k) or "") for k in
+                    ("full_text", "jd_text", "job_title", "company"))
+    level, pattern = risk_scan(text)
+    if level == "strong":
+        return True, f"风控字样命中: {pattern}"
+    if level == "weak":
+        return False, f"风控弱字样命中: {pattern}"
+    return False, ""
+
 def read_jd_for_job(job_id):
     """完整流程: 点击卡片 → 读 JD。返回 {"ok", "detail", "job_id", "jd"}"""
     click_result = click_card_inplace(job_id)
     if not click_result["ok"]:
         return {"ok": False, "detail": click_result["detail"],
-                "job_id": job_id, "jd": {}}
+                "job_id": job_id, "jd": {}, "risk_control": False}
 
     jd = read_jd_from_panel()
+    risk_hit, risk_detail = _risk_of_jd(jd)
+    if risk_hit:
+        return {"ok": False, "detail": f"risk_control: {risk_detail}",
+                "job_id": job_id, "jd": jd, "risk_control": True}
     if not jd.get("jd_text") and not jd.get("full_text"):
         return {"ok": False,
                 "detail": "右侧面板无 JD 内容（可能页面未渲染完或岗位已关闭）",
-                "job_id": job_id, "jd": jd}
-    return {"ok": True, "detail": "JD 读取成功", "job_id": job_id, "jd": jd}
+                "job_id": job_id, "jd": jd, "risk_control": False}
+    return {"ok": True, "detail": "JD 读取成功", "job_id": job_id, "jd": jd,
+            "risk_control": False}
 
 
 def main():
@@ -209,6 +228,16 @@ def main():
     print("-" * 50)
 
     result = read_jd_for_job(args.jobId)
+    if result.get("risk_control"):
+        print("[风控] ⛔ 页面命中风控字样，立即停止：禁止继续读 JD / 投递 / 重试")
+        print(f"[风控] {result['detail']}")
+        print("[风控] 请人工到浏览器确认账号状态并完成验证，再执行 "
+              "python serial_loop.py --step init --ack-risk")
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+            print(f"[风控] 现场已保存至 {args.output}")
+        sys.exit(3)
     if result["ok"]:
         jd = result["jd"]
         print(f"岗位: {jd.get('job_title', '?')}")

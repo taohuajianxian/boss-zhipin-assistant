@@ -42,12 +42,14 @@ python <SKILL_DIR>/scripts/env_check.py
 |---|---|---|
 | init | `serial_loop.py --step init` | 授权门禁检查、检查 WebBridge、导航推荐页、重置状态 |
 | next-batch | `serial_loop.py --step next-batch` | 滚动加载一批约 50 条岗位，追加到缓存 |
+| build-queue | `serial_loop.py --step build-queue` | ★生成与当前页面等长同序的 `jd_to_read.json`（规则层自动初筛 + 索引对齐） |
 | read | `serial_loop.py --step read --index N` | 读取第 N 条 JD 到 `current_jd.json` |
 | decide | `serial_loop.py --step decide --index N` | 执行上一步决策：投递并检查目标 |
 | evolve | `serial_loop.py --step evolve` | 评估结果，取下一个搜索关键词 |
 | navigate-search | `serial_loop.py --step navigate-search --keyword "词"` | 按关键词搜索导航 |
 | finish | `serial_loop.py --step finish` | 生成投递汇总 HTML（强制） |
 | status | `serial_loop.py --step status` | 查看当前进度 |
+| ack-risk | `serial_loop.py --step init --ack-risk` | 人工确认风控页/限流已解除，清除停机标记后重新 init |
 
 状态文件（位于 WORK_DIR）：`page_state.json`、`batch_state.json`、`surface_cache.json`、`jd_to_read.json`、`current_jd.json`、`decision.json`、`stream_progress.json`。
 
@@ -89,15 +91,33 @@ WebBridge 不可达时，先 `use_skill("kimi-webbridge")` 确保 daemon 运行�
 
 展示后询问：用默认规则，还是需要调整？确认后进入步骤 2。
 
-### 步骤 2：中层循环 — 滚动加载
+### 步骤 2：中层循环 — 滚动加载 + 队列生成
+
+**2a. 滚动加载**
 
 ```
 python <SKILL_DIR>/scripts/serial_loop.py --step next-batch
 ```
 
-加载一批约 50 条岗位追加到 `surface_cache.json`，输出岗位列表供 Agent 初筛。
+加载一批岗位追加到 `surface_cache.json`，**同时重建当前页面窗口 `page_window.json`**（取尾部 `total_cards` 条 = 页面真实卡片顺序）。输出末尾会提示下一步运行 build-queue。
 
-**Agent 初筛**：依据 `user_profile.json` 的 prefer / avoid / search_keywords / domain_description，把合资格岗位追加写入 `jd_to_read.json`（JSON 数组，元素含 page_order、jobId、title 等）。
+**2b. 生成对齐队列（强制）**
+
+```
+python <SKILL_DIR>/scripts/serial_loop.py --step build-queue
+```
+
+生成与页面**等长同序**的 `jd_to_read.json`：index N 严格等于页面第 N 张卡片，`page_order` 取自页面窗口。规则层（`scripts/job_filter.py`）自动初筛，输出三态：
+
+- **PASS**：命中画像核心方向（住宿/文旅/OTA/民宿/景区/电商/AI 工具等），优先 read → approve；
+- **REVIEW**：规则无法断言（薪资下限低但上限达标、泛方向岗位、面议薪资、与画像无显性交集），交语义层判断；
+- **REJECT**：硬排除并标记 `skip=true` 占位（餐饮/网咖/棋牌/助理/实习、行业黑名单、中介/匿名/培训机构、低价值岗、薪资上限低于门槛），read 时自动跳过、不消耗读取动作。
+
+**硬性约束**：
+
+- 禁止手工编写 `jd_to_read.json`；
+- 禁止在逐条 read 期间再调 next-batch —— 一旦页面滚动，索引与卡片的对应关系立即失效，会出现"读到的 JD 与队列标题不符"；
+- 队列穷尽后才进入步骤 4 evolve。
 
 ### 步骤 3：内层循环 — 逐条读 JD + 决策 + 投递
 
@@ -111,10 +131,17 @@ python <SKILL_DIR>/scripts/serial_loop.py --step read --index N
 
 结果写入 `current_jd.json`。
 
+read 阶段有两类**不读 JD 的自动跳过**（均直接写 `decision.json=REJECT`，索引占位保持不变）：
+
+- **规则排除**：该条 `skip=true`；
+- **重复投递拦截**：该 `jobId` 已在累计台账 `delivery_unified.json` 中投递成功/失败（跨会话去重，防止按钮仍显示"立即沟通"导致重复投递）。
+
 **3b. Agent 决策** — 输出 APPROVE / REJECT：
 
-- **APPROVE**：命中 `prefer` 方向、薪资下限 ≥ `min_salary_k`（若设了）、城市匹配、不在 `avoid` 内
+- **APPROVE**：命中 `prefer` 方向、薪资**上限** ≥ `min_salary_k`（若设了；区间如 7-9K 下限低但上限达标属可谈，不应一刀切拒绝）、城市匹配、不在 `avoid` 内
 - **REJECT**：命中 `avoid`、`domain_description` 排除领域、猎头/外包（若 `prefer_no_headhunter`）、大厂（若 `prefer_no_big_company`）、或低相关岗位
+- **REJECT（城市兜底，2026-11-18 新增）**：标题或 JD 写明非 `target_city` 的工作地 —— 形如「（宁波上班）」「驻上海」「工作地点：温州」「能接受温州工作」「长期派驻外地」—— 一律 REJECT，reason 标"异地工作地点"。规则层只能识别标题里的异地信号，JD 正文里的异地要求由语义层负责。仅 `target_city` 与境外驻外（新加坡/香港/澳门/日本）放行。
+- **REJECT（职能岗兜底，2026-11-18 新增）**：岗位职能本身是剪辑/拍剪/后期/摄像/摄影/美工/平面设计/视觉设计/AI训练师/数据标注时，即便 JD 出现"信息流/千川/投放素材"等方向词也一律 REJECT —— 方向词出现在 JD 里不代表这是方向岗。
 - 不确定时宁可 REJECT
 
 决策写入 `decision.json`，**必须用 shell_executor 一行命令覆写**，禁止 delete + write_file 组合（每轮会弹确认框打断循环）：
@@ -183,7 +210,8 @@ python <SKILL_DIR>/scripts/serial_loop.py --step finish
 - `search_keywords` **顺序即权重**。`direction_priority` 中声明为同等权重的多个方向，其关键词应在 `search_keywords` 中紧邻排列、同批覆盖，不允许某方向因排序靠后长期轮不到。
 - **当日开跑必须覆盖各同权重方向**：当日头 4 个执行的关键词中，至少 2 个属第二同权重方向；`--step evolve` 返回的首个关键词未覆盖时，Agent 需主动改跑该方向关键词，之后再回到列表顺序。
 - **达标前的兜底下限**：进入步骤 5 之前，每个同权重方向至少完整跑完 2 个关键词；若主方向先达标导致次要方向未跑，须补跑至少 1 个次要方向关键词并完成其 APPROVE 投递后再生成汇报。
-- **薪资口径**：以 `min_salary_k` 为准，按解析区间**下限**判定（下限 < min_salary_k 即拒，上限不用于放行）；`min_salary_k = 0` 表示不限；面议等无法解析下限的按不达标处理；兼职/日结/时薪走上面第 2 条三项门槛。
+- **薪资口径（v5.8 修订，以此为唯一真源）**：以 `min_salary_k` 为准，按解析区间**上限（max_basis）**判定——上限 ≥ `min_salary_k` 即通过，下限低但上限达标属"可谈"，不得一刀切拒绝；仅当区间上限 < `min_salary_k `才拒。真值定义写在 `scripts/rules.json` 的 `salary.policy = max_basis`，代码、提示词、本文档三处必须一致，由 `tools/check_consistency.py` 强制校验。`min_salary_k = 0` 表示不限；面议等无法解析区间的按"薪资待取证"交语义层，不下结论；兼职/日结/时薪走上面第 2 条三项门槛。
+  - 历史坑：v5.7 之前本文档的旧表述只看区间底部、把达标区间一律否掉，与代码 `max_basis`、与本手册 APPROVE 条件（上限 ≥ 门槛）三者互相矛盾，是被买家质疑"判定时好时坏"的直接原因之一。v5.8 已统一为 max_basis 并由检查脚本守住。
 - **方向语义判定**：以业务/运营/策划/内容/流程提效为主体的岗位 → APPROVE；若 `avoid` 或 `black_title` 已排除研发类，则岗位本质为写代码/做系统/算法/前后端/全栈/测试/运维/大模型开发 → REJECT。
 
 ---
@@ -202,6 +230,11 @@ python <SKILL_DIR>/scripts/serial_loop.py --step finish
 7. 所有浏览器操作必须走 Kimi WebBridge，不可 CDP 直连。
 8. **强制 finish**：无论以何种方式终止，都必须执行 `--step finish` 生成投递汇总.html。
 9. **激活与知识来源**：激活只认 `entitlement.py --activate`；选择器与点击 JS 只能来自 `plan.json`；授权门禁只在 `--step init` 判一次，运行期不得弹激活提示、不得中断循环。
+10. **风控字样红线（P0）**：任何页面出现「访问受限 / 异常行为 / 验证码 / 人机验证 / 请完成安全验证」等字样，或跳转到验证页，脚本**立即停机**并写入 `stop_reason=risk_control`。
+    - 停机后 `--step decide/read/next-batch/evolve/navigate-search` 一律以**退出码 2** 拒绝执行，**禁止任何形式的自动重试、清障复投、刷新、换关键词绕过**。
+    - 只能由人工到浏览器确认账号状态、完成验证后执行 `--step init --ack-risk` 清除标记再续投。
+    - `jd_reader.py` 命中风控时以**退出码 3** 终止并在 stderr/stdout 打印处置指引，同样视为停机信号。
+    - 停机原因码全集：`risk_control` / `auth_fail` / `daily_limit` / `comm_limit` / `selector_broken` / `consecutive_unknown` / `target_reached`，落库字段为 `stop_reason` / `stop_label` / `stop_detail` / `stop_manual` / `stop_at`，`--step status` 与汇总页均会展示。
 
 ---
 
@@ -212,5 +245,8 @@ python <SKILL_DIR>/scripts/serial_loop.py --step finish
 | WebBridge 不可达 | `use_skill("kimi-webbridge")` 启动 daemon 后重试 |
 | `--step read` 失败 | 立即停止并告知用户；不得刷新或切页重试；经确认后 `--step init` |
 | 连续 3 条 comm_limit | 按红线第 5 条处理，停下等用户确认 |
+| 页面出现风控字样（访问受限/异常行为/验证码/人机验证） | 已自动停机并落 `stop_reason=risk_control`；**禁止重试/清障/刷新**，等人工完成验证后 `--step init --ack-risk` |
+| `--step decide` 返回退出码 2 并提示「流水线处于停机状态」 | 说明存在停机标记，先看 `--step status` 的原因码与建议，按提示人工处置后再 `--ack-risk` |
+| `jd_reader.py` 退出码 3 | 页面已被风控拦截，不得继续读 JD 或投递，按 `risk_control` 流程处置 |
 | 门禁未放行 | 按 init 打印的提示激活；不得绕过 |
 | 账户不匹配（env_check 报警） | 提示用户确认 Chrome 登录账号与 `user_profile.json` 一致 |
