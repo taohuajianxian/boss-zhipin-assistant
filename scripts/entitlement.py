@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""激活码与免费额度（CLI 是唯一权威入口，零第三方依赖）。
 
-★ 硬规则（写进 skill.md）：
-  用户把激活码发到 Agent 对话后，Agent 必须执行
-      python scripts/entitlement.py --activate <CODE>
-  只回一句「已激活」不算数 —— 授权判定一律以本脚本落盘的 license.json 为准。
 
-免费规则：
-  - 首次运行当天，可完整体验投满平台硬顶（默认 150 份）。
-  - 从第二天起需要激活码；免费赠送的码也有到期日，到期后可再找作者续。
-  - 激活码首次激活绑定匿名设备指纹（只上传哈希）。
 
-离线宽限：
-  - 授权文件落盘后，每天跑 skill 不必联网、不必再输码。
-  - 服务端临时不可用时照样用本地缓存的指令包；授权到期后另有 24h 宽限。
 
-CLI:
-    python scripts/entitlement.py --activate ABCD-1234-EFGH
-    python scripts/entitlement.py --status
-    python scripts/entitlement.py --check        # 供 serial_loop 门禁用，退出码 0/1
-    python scripts/entitlement.py --record       # 成功投递一次后计数
-    python scripts/entitlement.py --sync         # 重新拉一次云端指令包
-"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 from __future__ import annotations
 
 import argparse
@@ -34,21 +34,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts import cloud_client as cc  # noqa: E402
+from scripts import cloud_client as cc
 
 GRACE_HOURS = 24
 DEFAULT_FREE_LIMIT = 150
 
-# 防伪造与防复制的联网核验节奏：
-#   每 72 小时联网向授权服务端核验一次授权；连续 168 小时（7 天）都连不上才拦，
-#   避免服务端抖动或用户断网时误伤已激活用户。
+
+
+
 ONLINE_CHECK_HOURS = 72
 ONLINE_FAIL_LIMIT_HOURS = 168
 
 
-# ═══════════════════════════════════════════════════════════
-# 本地状态文件
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def load_license() -> dict:
     return cc._read_json(cc.LICENSE_FILE, {}) or {}
@@ -70,7 +70,7 @@ def today() -> str:
 
 
 def free_limit() -> int:
-    """免费额度跟着云端指令包走；没指令包时用 150 兜底。"""
+
     try:
         return int(cc.limits().get("fatal") or DEFAULT_FREE_LIMIT)
     except (TypeError, ValueError):
@@ -99,21 +99,21 @@ def _hours_since(iso: str):
 
 
 def _safe_endpoint() -> str:
-    """端点校验不通过时当作未配置处理，避免状态查询整体报错。"""
+
     try:
         return cc.endpoint() or ""
-    except Exception:                             # noqa: BLE001
+    except Exception:
         return ""
 
 
 def refresh_license(license_data: dict):
-    """联网核验一次授权，并把服务器签发的授权文件刷新到本地。
 
-    返回值 (result, reason, license_data)：
-      True  = 核验通过，本地授权文件已刷新
-      False = 服务器明确拒绝（到期 / 作废 / 设备不符），reason 为原因
-      None  = 网络不可达，这是"没核验成"，不代表授权失效
-    """
+
+
+
+
+
+
     code = license_data.get("code")
     device = cc.device_id()
     status, obj = cc.verify(code, device)
@@ -135,7 +135,7 @@ def refresh_license(license_data: dict):
 
 
 def status_snapshot(start_free: bool = False) -> dict:
-    """返回统一的状态字典。只有门禁调用（start_free=True）才会真正开启免费期。"""
+
     license_data = load_license()
     usage = load_usage()
     plan, source, _ = cc.load_plan()
@@ -177,7 +177,7 @@ def status_snapshot(start_free: bool = False) -> dict:
 
     expiry = license_data.get("expires_at")
     if license_data.get("code"):
-        # ① 授权文件必须属于这台电脑：把别人的 license.json 拷过来直接作废
+
         owner = license_data.get("device")
         if owner and owner != snap["device"]:
             snap.update({
@@ -188,7 +188,7 @@ def status_snapshot(start_free: bool = False) -> dict:
             })
             return snap
 
-        # ② 授权文件签名：手改到期日/类型会立刻露馅
+
         sig_ok = cc.verify_license_sig(license_data)
         if sig_ok is False:
             snap.update({
@@ -198,7 +198,7 @@ def status_snapshot(start_free: bool = False) -> dict:
             })
             return snap
 
-        # ③ 联网核对：能验签就 72h 一次；没配验签密钥就每次运行都核一次
+
         last_ok = license_data.get("last_ok_at") or license_data.get("activated_at")
         idle = _hours_since(last_ok) if last_ok else None
         must_check = sig_ok is None or idle is None or idle >= ONLINE_CHECK_HOURS
@@ -230,7 +230,7 @@ def status_snapshot(start_free: bool = False) -> dict:
                     return snap
                 snap["verify_note"] = f"暂未联网核验（{reason}），授权按本地文件继续有效"
 
-        if not expiry:  # lifetime
+        if not expiry:
             left = None
             hours_after = -1
         else:
@@ -263,7 +263,7 @@ def status_snapshot(start_free: bool = False) -> dict:
         })
         return snap
 
-    # 无激活码：免费体验。资格登记在作者服务器上，删本地 usage.json 也重置不了
+
     free_today = False
     free_reason = ""
     status, obj = cc.free_signin(snap["device"])
@@ -275,10 +275,18 @@ def status_snapshot(start_free: bool = False) -> dict:
             usage["first_run_date"] = today()
             save_usage(usage)
     elif status == 0:
-        # 连不上服务器（或作者没配服务地址）：退回本地判断，先让人用上
-        snap["verify_note"] = "离线，免费资格未联网核验"
-        free_today = today() <= effective_first
-        free_reason = "免费体验仅限首次运行当天"
+
+
+
+
+        snap.update({
+            "allowed": False, "mode": "free_unverified",
+            "title": "免费体验需要联网核验",
+            "detail": "暂时连不上作者服务器，免费资格没法确认。联网后重新运行即可；"
+                      "或者找作者要一张激活码，激活后有离线宽限，不必每次联网。",
+            "verify_note": "离线，免费资格未联网核验",
+        })
+        return snap
     else:
         free_reason = (obj or {}).get("reason") or "免费体验已结束"
 
@@ -306,17 +314,17 @@ def status_snapshot(start_free: bool = False) -> dict:
     return snap
 
 
-# ═══════════════════════════════════════════════════════════
-# 供 serial_loop 调用的函数式入口
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def gate_at_start() -> dict:
-    """step_init 边界门禁。运行期绝不打断，只在初始化这一步判一次。"""
+
     return status_snapshot(start_free=True)
 
 
 def record_delivery(count: int = 1):
-    """一次成功投递后计数（自然日重置）。"""
+
     usage = load_usage()
     if not usage.get("first_run_date"):
         usage["first_run_date"] = today()
@@ -328,7 +336,7 @@ def record_delivery(count: int = 1):
 
 
 def activation_hint(snap: dict) -> str:
-    """给 finish / 汇报页用的柔和提示。"""
+
     if snap["mode"] in ("licensed", "grace"):
         return "授权正常，新版页面结构会自动同步。有问题随时找我。"
     if snap["mode"] == "free":
@@ -336,9 +344,9 @@ def activation_hint(snap: dict) -> str:
     return "加个微信说一声，我给你发一张新的激活码；不方便的话直接讲，免费送你。"
 
 
-# ═══════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 TYPE_LABEL = {
     "gift": "福利码", "casual": "随喜码",
@@ -353,7 +361,7 @@ def activate(code: str) -> int:
         return 1
     try:
         ep = cc.endpoint()
-    except Exception as e:                        # noqa: BLE001
+    except Exception as e:
         print(f"服务地址未通过安全校验：{e}")
         print("确认这就是你要连接的地址后，执行："
               f"python scripts/cloud_client.py --accept-endpoint <URL>")
@@ -383,11 +391,11 @@ def activate(code: str) -> int:
     expiry = lic.get("expires_at") or "长期"
     print(f"激活成功 | {TYPE_LABEL.get(lic.get('type'), lic.get('type'))} | 到期 {expiry[:10] if expiry != '长期' else '长期'}"
           f" | 剩余 {lic.get('days_left') if lic.get('days_left') is not None else '长期'}"
-          f" | 指令包 {lic.get('plan_version') or '未下发'}")
+          f" | 适配数据 {lic.get('plan_version') or '未下发'}")
     if synced.get("ok"):
-        print(f"云端指令包已同步：{synced['plan_version']}（{synced['selectors']} 个选择器）")
+        print(f"云端适配数据已同步：{synced['plan_version']}（{synced['selectors']} 个选择器）")
     else:
-        print(f"云端指令包暂未同步：{synced.get('reason')}；先用随包附带的版本，不影响使用。")
+        print(f"云端适配数据暂未同步：{synced.get('reason')}；先用随包附带的版本，不影响使用。")
     print("已落盘授权文件，之后每天直接跑，不用再输码、也不必每次联网。")
     return 0
 
@@ -401,7 +409,7 @@ def print_status(snap: dict, as_json: bool = False):
     print(f"说明      : {snap['detail']}")
     print(f"免费额度  : 今天已投 {snap['free_used_today']} / {snap['free_limit']} 份（首日 {snap['free_first_day']}）")
     print(f"激活码    : {snap['code'] or '（无）'}  类型 {snap['type'] or '—'}  到期 {snap['expires_at'] or '—'}")
-    print(f"指令包    : {snap['plan_version'] or '未加载'}（来源 {snap['plan_source']}）")
+    print(f"适配数据    : {snap['plan_version'] or '未加载'}（来源 {snap['plan_source']}）")
     print(f"服务地址  : {snap['endpoint'] or '（未配置，离线免费体验）'}")
     print(f"设备指纹  : {snap['device']}  （只上传哈希，不含 MAC / 用户名）")
     if snap["last_sync_at"]:
@@ -421,7 +429,7 @@ def main():
     g.add_argument("--status", action="store_true", help="查看授权状态")
     g.add_argument("--check", action="store_true", help="门禁检查，退出码 0=放行 / 1=拦截")
     g.add_argument("--record", action="store_true", help="记录一次成功投递")
-    g.add_argument("--sync", action="store_true", help="重新拉取云端指令包")
+    g.add_argument("--sync", action="store_true", help="重新拉取云端适配数据")
     ap.add_argument("--count", type=int, default=1, help="--record 的投递次数，默认 1")
     ap.add_argument("--json", action="store_true", help="--status / --check 输出 JSON")
     args = ap.parse_args()

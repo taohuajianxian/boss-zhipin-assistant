@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
-"""
-模块 F: 投递执行引擎（推荐页/搜索页内原地投递 + 智能页面反馈监测）
 
-新增:
-  - check_delivery_target() — 流程图"总投递数量是否满足要求"节点
-  - DAILY_TARGET 常量 — 每日投递目标（默认150）
 
-核心创新（融合参考skill v6.3+ 和本机 v2 反馈检测）:
-  1. 全程停留在当前页面（推荐页/搜索页），不 navigate 到 job_detail URL
-  2. 在右侧面板点击「立即沟通」-> 处理原地弹窗 -> 点「留在此页」
-  3. 保留 v2 智能反馈检测: FATAL_PATTERNS + _check_fatal_patterns
-  4. 致命错误优先检测: 在处理弹窗之前检测上限提示
-  5. 连续 3 次未知状态 -> 熔断暂停
 
-关键处理:
-  1. 点击 .op-btn-chat 前先 scrollIntoView 确保按钮在视口内
-  2. 每步操作后立即检测状态
-  3. 正确处理原地弹窗
-  4. 成功判断基于累计证据
-  5. ProgressManager API 修正
 
-独立可运行:
-    python deliver_engine.py jobs_to_deliver.json --progress stream_progress.json --max 50
 
-也可被其他模块 import:
-    from scripts.deliver_engine import deliver_inplace, check_delivery_target
-"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import json
 import time
@@ -45,7 +45,7 @@ from scripts.webbridge_client import (
     ProgressManager, register_signal_guard, SafeInterrupt,
 )
 from scripts.jd_reader import click_card_inplace
-# P0-1: 风控字样词表集中定义在 stop_codes，本引擎只负责检测与上报
+
 from scripts.stop_codes import (
     RISK_STRONG_PATTERNS,
     RISK_WEAK_PATTERNS,
@@ -53,19 +53,19 @@ from scripts.stop_codes import (
     risk_scan,
 )
 
-# ═══════════════════════════════════════════════════════════
-# 投递目标常量 — 从 user_profile.json 读取 (profile_loader 导入)
-# ═══════════════════════════════════════════════════════════
 
 
-# ═══════════════════════════════════════════════════════════
-# 页面反馈检测常量 (从 v2 迁移)
-# ═══════════════════════════════════════════════════════════
 
-# 120 次沟通上限 ≠ 完全日上限
-# 沟通上限仍然可以搜索浏览收集，不应触发 step_finish() 终止一切
+
+
+
+
+
+
+
+
 COMM_LIMIT_PATTERNS = [
-    "您今天已与",           # "您今天已与120/120位BOSS沟通过" — 仅限制新沟通，可继续搜索
+    "您今天已与",
 ]
 
 FATAL_PATTERNS = [
@@ -73,12 +73,12 @@ FATAL_PATTERNS = [
     "今日沟通已达上限",
     "今日已达上限",
     "沟通次数已达上限",
-    "今日投递已达上限",      # 完全日上限
+    "今日投递已达上限",
     "每天最多沟通",
     "今日沟通额度已用完",
     "达到沟通上限",
     "沟通上限",
-    "休息一下，明天再来",     # 完全日上限
+    "休息一下，明天再来",
     "已达今日沟通上限",
 ]
 
@@ -100,29 +100,29 @@ SKIP_PATTERNS = [
 ]
 
 MAX_CONSECUTIVE_UNKNOWN = 3
-# 连续 N 条 comm_limit 判定为"页面被遮罩挡住"或"平台真封顶"，停止本批待人工确认
+
 MAX_CONSECUTIVE_COMM = 3
-# 连续 N 条页面结构失败（按钮丢失/卡片定位失败）判定为 BOSS 改版
+
 MAX_CONSECUTIVE_SELECTOR = 3
 
-# ═══════════════════════════════════════════════════════════
-# P0-1 风控字样检测 — 命中即停机（stop_reason=risk_control）
-# ═══════════════════════════════════════════════════════════
-# 词表见 scripts/stop_codes.py：强词单次命中即停，弱词连续 2 次命中才停。
-# 风控优先于上限/跳过检测：风控页文案常同时含"安全验证""沟通上限"等字，
-# 若先判上限会被误记成 comm_limit → 触发清障复投 → 越投越黑。
+
+
+
+
+
+
 _RISK_WEAK_STREAK = 0
 
 
 def check_risk_control(page_text):
-    """检测页面文本中的风控字样
 
-    返回:
-        (hit, level, detail)
-        hit: bool 是否判定为风控拦截
-        level: 'strong' | 'weak' | ''
-        detail: 命中说明（含命中词）
-    """
+
+
+
+
+
+
+
     global _RISK_WEAK_STREAK
     level, pattern = risk_scan(page_text)
     if level == 'strong':
@@ -139,30 +139,30 @@ def check_risk_control(page_text):
     return False, '', ''
 
 
-# ═══════════════════════════════════════════════════════════
-# 投递目标检查 — 流程图"总投递数量是否满足要求"节点
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def check_delivery_target(progress_file=None):
-    """★ 流程图节点: 总投递数量是否满足要求
 
-    读取投递进度文件，判断成功投递总数是否达到 DAILY_TARGET。
 
-    参数:
-        progress_file: 进度文件路径（默认使用工作目录下的 stream_progress.json）
 
-    返回:
-        dict: {
-            "target_met": bool,       # 是否达标
-            "delivered_count": int,   # 已投递成功数
-            "target": int,            # 目标数
-            "remaining": int,         # 还差多少
-        }
-    """
+
+
+
+
+
+
+
+
+
+
+
+
     if progress_file is None:
         progress_file = os.path.join(WORK_DIR, "stream_progress.json")
 
-    # ★ 统一口径：与 --step status、投递汇总.html 共用 stats_core（jobId 去重）
+
     delivered_count = None
     try:
         from scripts import stats_core
@@ -170,7 +170,7 @@ def check_delivery_target(progress_file=None):
         delivered_count = _st["cumulative"]["success"]
     except Exception:
         delivered_count = None
-    if delivered_count is None:  # 兜底：旧逻辑（无 stats_core 时）
+    if delivered_count is None:
         pm = ProgressManager(progress_file)
         pm.load()
         delivered_count = getattr(pm, 'delivered_count', 0) or len(getattr(pm, 'delivered', []))
@@ -190,29 +190,29 @@ def check_delivery_target(progress_file=None):
     return result
 
 
-# ═══════════════════════════════════════════════════════════
-# 弹窗处理
-# ═══════════════════════════════════════════════════════════
 
-# 招呼送达强证据：出现这些文案即代表 BOSS 已收到招呼
-# 「已向BOSS发送消息」= 发送成功的确认弹窗标题
-# 「如需修改打招呼内容」= 该确认弹窗的固定提示句（招呼语设置引导）
+
+
+
+
+
+
 _GREET_PROOF_KEYWORDS = (
     '已向BOSS发送消息',
     '已向Boss发送消息',
     '已向boss发送消息',
     '如需修改打招呼内容',
 )
-# 弱证据：只证明招呼弹窗出现过，不证明已送达
+
 _GREET_WEAK_KEYWORDS = ('自我介绍一下', '打招呼内容', '发送招呼')
 
 
 def _text_snippet(text, keyword, span=120):
-    """截取关键词周边文本，供落库留证
 
-    以关键词为锚点向后取为主、向前只留少量上下文：
-    body.innerText 里混有导航/推荐链接等噪音，向前取多会污染证据片段。
-    """
+
+
+
+
     if not text or not keyword:
         return ''
     idx = text.find(keyword)
@@ -224,16 +224,16 @@ def _text_snippet(text, keyword, span=120):
 
 
 def grab_greet_evidence():
-    """抓取打招呼弹窗证据文本
 
-    BOSS 投递成功后原地弹出确认弹窗，含招呼语正文 +
-    「如需修改打招呼内容，请在【消息通知-设置招呼语】页面修改」提示。
-    识别到该弹窗即视为招呼已发送成功，无需进入沟通列表核验。
 
-    返回:
-        {'matched': bool, 'kind': str, 'snippet': str}
-        matched=True 表示已拿到送达强证据
-    """
+
+
+
+
+
+
+
+
     text = evaluate("""
     (function(){
         var texts = [];
@@ -269,14 +269,14 @@ def grab_greet_evidence():
 
 
 def handle_greet_popup():
-    """处理打招呼弹窗，点击"发送"按钮完成投递
 
-    BOSS直聘点击"立即沟通"后原地弹出打招呼确认框，
-    需要点击"发送"按钮发送招呼语。
 
-    返回:
-        'sent:xxx' | 'no_popup'
-    """
+
+
+
+
+
+
     popup_result = evaluate("""
     (function(){
         var dialogSelectors = '.dialog-wrap, .greet-pop, .dialog-container, .layer-dialog, .modal, .ant-modal-wrap, .layer-ext';
@@ -327,14 +327,14 @@ def handle_greet_popup():
 
 
 def click_stay_on_page():
-    """点击"留在此页"按钮
 
-    投递成功后 BOSS 原地弹出确认弹窗，含"留在此页"和"继续沟通"两个按钮。
-    必须点"留在此页"（留在当前页面），绝不点"继续沟通"（会跳转聊天页）。
 
-    返回:
-        'clicked:留在此页' | 'not_found'
-    """
+
+
+
+
+
+
     result = evaluate("""
     (function(){
         var btns = document.querySelectorAll('button, a');
@@ -356,16 +356,16 @@ def click_stay_on_page():
     return result or 'not_found'
 
 
-# ═══════════════════════════════════════════════════════════
-# 状态检测辅助函数
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def _check_fatal_patterns():
-    """检测页面是否有致命错误/登录过期/跳过模式
 
-    返回:
-        (status, detail): 匹配到模式时返回对应 status，无匹配返回 (None, '')
-    """
+
+
+
+
     page_text = evaluate("""
     (function(){
         var texts = [];
@@ -389,29 +389,29 @@ def _check_fatal_patterns():
 
     current_url = evaluate("window.location.href") or ""
     _url_low = current_url.lower()
-    # 风控跳转页优先：passport/verify 类页面同时含 login 字样，先判风控再判登录
+
     if any(k in _url_low for k in ('captcha', 'verify', 'safe-check', 'security-check')):
         return 'risk_control', f"风控拦截(URL跳转验证页): {current_url[:80]}"
     if "login" in current_url or "passport" in current_url:
         return 'login_expired', f"页面跳转登录: {current_url[:80]}"
 
-    # ★ P0-1 风控字样立即停：命中即返回，绝不进入后续清障/复投流程
+
     risk_hit, risk_level, risk_detail = check_risk_control(page_text)
     if risk_hit:
         return 'risk_control', f"{risk_detail}[{risk_level}]"
 
-    # 两级上限精确区分
-    #   120次: "您今天已与120/120位BOSS沟通过" — 仅提示，仍可继续投递
-    #   150次: "您今天已与150位BOSS沟通，休息一下，明天再来吧～" — 硬顶，停止一切
-    #   旧版 COMM_LIMIT_PATTERNS=["您今天已与"] 同时匹配两级，且先于 FATAL 检测，
-    #   导致 150 硬顶被误判为 120 软顶 → 永不触发 fatal_limit。
-    # 方案: 优先用数字解析区分，再回退到模式匹配（FATAL 先于 COMM）。
-    # 120 格式: "您今天已与120/120位BOSS沟通过"
+
+
+
+
+
+
+
     m120 = re.search(r'您今天已与\s*(\d+)\s*/\s*(\d+)\s*位', page_text)
     if m120:
         return 'comm_limit', f"触发沟通上限提示({m120.group(1)}/{m120.group(2)}位): 仍可继续投递"
 
-    # 150 格式: "您今天已与150位BOSS沟通，休息一下，明天再来吧～"
+
     m150 = re.search(r'您今天已与\s*(\d+)\s*位', page_text)
     if m150:
         num = int(m150.group(1))
@@ -419,7 +419,7 @@ def _check_fatal_patterns():
             return 'fatal_limit', f"触发每日硬顶({num}位): 停止投递"
         return 'comm_limit', f"触发沟通上限提示({num}位): 仍可继续投递"
 
-    # 回退: 模式匹配 — 先 FATAL（150硬顶特征更强）再 COMM（120软顶）
+
     for pattern in FATAL_PATTERNS:
         if pattern in page_text:
             return 'fatal_limit', f"触发每日上限: {pattern}"
@@ -440,7 +440,7 @@ def _check_fatal_patterns():
 
 
 def _get_chat_button_text():
-    """获取当前沟通按钮的文字"""
+
     return evaluate("""
     (function(){
         var btn = document.querySelector('.op-btn-chat, .btn-startchat, .job-chat-btn');
@@ -449,44 +449,44 @@ def _get_chat_button_text():
     """) or ""
 
 
-# ═══════════════════════════════════════════════════════════
-# 核心投递逻辑
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def deliver_inplace(job_id, job_info=None):
-    """当前页面内原地投递单个岗位
 
-    流程:
-      1. 点击卡片（右侧面板就地切 JD）
-      2. scrollIntoView + 点击「立即沟通」(.op-btn-chat)
-      3. 等2s -> 立即检测致命错误
-      4. 处理打招呼弹窗（点击"发送"）
-      5. 等1s -> 点击「留在此页」
-      6. 等1s -> 检测最终状态
-      7. 根据累计证据返回 status
 
-    参数:
-        job_id: 加密岗位 ID
-        job_info: 可选的岗位信息 dict
 
-    返回:
-        (status, detail)
-        status: 'success' | 'fatal_limit' | 'comm_limit' | 'risk_control'
-                | 'login_expired' | 'skip' | 'selector_broken' | 'fail' | 'unknown'
 
-        risk_control    : 页面命中风控字样/验证页，调用方必须立即停机，禁止任何重试
-        selector_broken : 卡片或沟通按钮持续定位失败，疑似 BOSS 改版
-        fail            : 遮罩残留等可重试类失败
-    """
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     title = (job_info or {}).get('title', '')[:25] if job_info else job_id
 
-    # 投递前确保仍在本 session 独立标签页（切标签也不会误投到其他页面）
+
     if not ensure_active_tab():
         return 'fail', '无法确认独立标签页，停止投递'
 
-    # preflight 清障：上限提示会叠加 2~6 层遮罩，遮罩挡住卡片点击时，
-    # 页面表现为"点了没反应"，会被误判成 comm_limit/fail（假失败主因）。
-    # 零延时探测：干净则直接跳过，只有真检测到遮罩才付出关闭成本。
+
+
+
     _residue = popup_residue()
     if _residue > 0:
         _cleared = handle_popup()
@@ -497,14 +497,14 @@ def deliver_inplace(job_id, job_info=None):
         if _left > 0:
             return 'fail', f'遮罩残留 {_left} 个未清除({_cleared})，跳过防假失败'
 
-    # 1. 点击卡片
+
     click_result = click_card_inplace(job_id, verify=True, max_wait=5)
     if not click_result["ok"]:
         return 'selector_broken', f"卡片定位失败: {click_result['detail']}"
 
     time.sleep(1)
 
-    # 2. scrollIntoView + 点击
+
     scroll_result = evaluate("""
     (function(){
         var btn = document.querySelector('.op-btn-chat');
@@ -522,7 +522,7 @@ def deliver_inplace(job_id, job_info=None):
 
     if scroll_result == 'not_found':
         body_text = evaluate("document.body.innerText") or ""
-        # 按钮未找到先排风控：遮罩式风控会让按钮"凭空消失"，不能当改版处理
+
         risk_hit, risk_level, risk_detail = check_risk_control(body_text)
         if risk_hit:
             return 'risk_control', f"{risk_detail}[{risk_level}]"
@@ -545,18 +545,18 @@ def deliver_inplace(job_id, job_info=None):
     if click_result == 'not_found':
         return 'selector_broken', '点击时按钮消失'
 
-    # 3. 等待弹窗 → 检测致命错误
+
     time.sleep(2)
     fatal_status, fatal_detail = _check_fatal_patterns()
     if fatal_status:
         return fatal_status, fatal_detail
 
-    # 4. 处理打招呼弹窗（口径：识别到「已向BOSS发送消息」弹窗即招呼已送达）
-    pre_ev = grab_greet_evidence()          # 点发送前：弹窗可能已带招呼语正文
+
+    pre_ev = grab_greet_evidence()
     popup = handle_greet_popup()
     sent_greeting = (popup != 'no_popup')
 
-    # 弹窗会被后续操作关掉，点发送后立即抢抓一次，再等页面稳定抓第二次
+
     post_ev = grab_greet_evidence()
     if sent_greeting:
         time.sleep(1.5)
@@ -565,7 +565,7 @@ def deliver_inplace(job_id, job_info=None):
             if post_ev2.get('matched') or not post_ev.get('kind'):
                 post_ev = post_ev2
 
-    # 取证据优先级：发送后强证据 > 发送前强证据 > 发送后弱证据
+
     greet_ev = {'matched': False, 'kind': '', 'snippet': ''}
     for cand in (post_ev, pre_ev):
         if cand and cand.get('matched'):
@@ -582,7 +582,7 @@ def deliver_inplace(job_id, job_info=None):
         greet_tag += f"|{greet_ev['snippet'][:80]}"
 
 
-    # 5. 点击「留在此页」
+
     stay_result = click_stay_on_page()
     stayed_on_page = (stay_result == 'clicked:留在此页')
 
@@ -592,16 +592,16 @@ def deliver_inplace(job_id, job_info=None):
         handle_popup()
         time.sleep(1)
 
-    # 6. 检测最终状态
+
     fatal_status, fatal_detail = _check_fatal_patterns()
     if fatal_status:
         return fatal_status, fatal_detail
 
     btn_text = _get_chat_button_text()
 
-    # 7. 综合判断
-    # 判定口径（用户确认）：识别到「已向BOSS发送消息」弹窗 = 招呼已送达 = 投递成功，
-    # 不需要进入沟通列表核验，沟通列表不作为成功判定依据。
+
+
+
     if greet_verified:
         return 'success', f'投递成功(已发送招呼|{greet_tag})'
 
@@ -614,20 +614,20 @@ def deliver_inplace(job_id, job_info=None):
     if sent_greeting:
         return 'success', f'投递成功(已点击发送招呼|{greet_tag})'
 
-    # "留在此页"被点击本身就是投递成功的强证据
-    # "留在此页"按钮只在招呼语发送成功后的确认弹窗中出现
+
+
     if stayed_on_page:
         return 'success', f'投递成功(留在此页已点击,招呼弹窗可能自动发送|{greet_tag})'
 
     return 'unknown', f'未确认成功: popup={popup}, stay={stay_result}, btn={btn_text[:20]}, greet={greet_tag}'
 
 
-# ═══════════════════════════════════════════════════════════
-# 批量投递（兼容旧接口）
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def run_batch(jobs_file, progress_file="stream_progress.json", max_count=0):
-    """批量投递（兼容旧接口，v5.0推荐使用serial_loop.py串行控制）"""
+
     register_signal_guard()
 
     if not health_check():
@@ -675,8 +675,8 @@ def run_batch(jobs_file, progress_file="stream_progress.json", max_count=0):
 
         status, detail = deliver_inplace(job_id, job_info=job)
 
-        # comm_limit 先清障再复投一次。多数 comm_limit 是遮罩挡住点击的假失败，
-        # 关掉叠加弹窗后重投通常直接成功；只有清障后仍 comm_limit 才算真上限。
+
+
         if status == 'comm_limit':
             _cleared = handle_popup()
             _left = popup_residue()
@@ -716,8 +716,8 @@ def run_batch(jobs_file, progress_file="stream_progress.json", max_count=0):
             print(f"\n致命错误，整批停止")
             break
 
-        # 120 次提示是"仍可继续"，150 次才是硬顶（硬顶已由 fatal_limit 在上方拦截）。
-        # 单次 comm_limit 不阻断；但连续多条说明遮罩清不干净或平台真封顶，继续投只会刷假失败。
+
+
         if status == 'comm_limit':
             consecutive_comm += 1
             if consecutive_comm >= MAX_CONSECUTIVE_COMM:
@@ -728,7 +728,7 @@ def run_batch(jobs_file, progress_file="stream_progress.json", max_count=0):
         else:
             consecutive_comm = 0
 
-        # 投递目标检查
+
         target_check = check_delivery_target(progress_file)
         if target_check["target_met"]:
             print(f"\n★ 投递目标 {DAILY_TARGET} 份已达成！停止投递")

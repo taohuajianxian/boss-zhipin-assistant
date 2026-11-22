@@ -29,7 +29,7 @@ python <SKILL_DIR>/scripts/env_check.py
 1. **执行脚本**：一律用 `python_executor` 运行 `<SKILL_DIR>/scripts/` 下的 .py 文件。
 2. **脚本即权威**：所有页面导航必须经本 skill 的 CLI 步骤执行（`--step init`、`--step navigate-search <kw>`），**严禁 Agent 自行构造 URL 后用 `window.location` 或 evaluate 绕过**。URL 常量只以脚本为准，凭记忆或猜测的 URL 一律不可信。
 3. **AI 决策**：岗位 APPROVE / REJECT 必须由 Agent 依据 `user_profile.json` 语义判断，不得硬编码匹配。
-4. **知识来源只认指令包**：页面选择器、点击 JS 一律从 `dist/plan.json`（或云端同步的新版指令包）注入，禁止手写选择器或内联 JS 塞进 evaluate。
+4. **知识来源只认云端适配数据**：页面选择器、点击动作一律取自云端同步的适配数据（本机缓存），不要手写选择器或临时拼接脚本塞进 evaluate。随包不带适配数据，首次运行先联网同步。
 5. **运行期严禁动页**：`init → next-batch → read → decide → evolve` 全流程严禁页面切换、刷新、导航、切标签页。推荐列表一旦被重排，`read` 就找不到已缓存卡片。read 失败 = 立即停止并提示用户，**绝不自行刷新/切页/滚动重试**；恢复只能经用户确认后重跑 `--step init`。
 6. **独立标签页**：全程固定在本会话自己打开的 BOSS 标签页，绝不借用用户当前查看的页面；用户切到别的标签不影响流水线。
 7. **激活必须走 CLI**：用户把激活码发到对话后，必须执行 `python scripts/entitlement.py --activate <CODE>`，**严禁只口头回复「已激活」**；授权判定只认脚本落盘的 `license.json`。
@@ -42,7 +42,7 @@ python <SKILL_DIR>/scripts/env_check.py
 |---|---|---|
 | init | `serial_loop.py --step init` | 授权门禁检查、检查 WebBridge、导航推荐页、重置状态 |
 | next-batch | `serial_loop.py --step next-batch` | 滚动加载一批约 50 条岗位，追加到缓存 |
-| build-queue | `serial_loop.py --step build-queue` | ★生成与当前页面等长同序的 `jd_to_read.json`（规则层自动初筛 + 索引对齐） |
+| build-queue | `serial_loop.py --step build-queue` | ·生成与当前页面等长同序的 `jd_to_read.json`（规则层自动初筛 + 索引对齐） |
 | read | `serial_loop.py --step read --index N` | 读取第 N 条 JD 到 `current_jd.json` |
 | decide | `serial_loop.py --step decide --index N` | 执行上一步决策：投递并检查目标 |
 | evolve | `serial_loop.py --step evolve` | 评估结果，取下一个搜索关键词 |
@@ -250,3 +250,6 @@ python <SKILL_DIR>/scripts/serial_loop.py --step finish
 | `jd_reader.py` 退出码 3 | 页面已被风控拦截，不得继续读 JD 或投递，按 `risk_control` 流程处置 |
 | 门禁未放行 | 按 init 打印的提示激活；不得绕过 |
 | 账户不匹配（env_check 报警） | 提示用户确认 Chrome 登录账号与 `user_profile.json` 一致 |
+| 状态文件 0 字节 / 报 `JSONDecodeError` | 旧版本非原子写留下的残骸；把该状态文件移出目录后重跑对应步骤。当前版本已改原子写，中断不会再损坏 |
+| 长任务输出被截断后进程消失 | 禁止用 `\| Select-Object -First` / `\| head -n` 截断长任务输出（会终止 python）；改为重定向到文件再读尾部 |
+| `--index N` 点开的岗位与队列第 N 条不符 | 说明队列与页面不同序：重跑 `--step next-batch` 重建窗口（以 DOM 实卡数为准），并检查 `page_window.json` 的 `total_cards` 是否等于页面卡片数 |

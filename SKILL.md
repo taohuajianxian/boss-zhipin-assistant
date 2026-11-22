@@ -2,11 +2,11 @@
 name: boss-zhipin-deliver
 slug: boss-zhipin-assistant
 displayName: BOSS直聘自动化投递
-version: 26.11.19
+version: 26.11.20-a
 description: BOSS直聘自动化投递技能。在已登录的 Chrome 上接管职位搜索与推荐页，按你填写的求职方向、城市、薪资下限与岗位画像逐条读取 JD 并做语义判断，符合的自动投递并跟踪结果，结束时生成 HTML 投递汇总。浏览器操作依赖 Kimi WebBridge（端口 10086），全程固定在本会话独立标签页，不抢占你正在看的页面。
 summary: BOSS直聘自动化投递：在你已登录的 Chrome 上按求职方向、城市、薪资下限与岗位画像逐条读取 JD 做语义判断，符合的自动投递并跟踪结果，结束时生成 HTML 投递汇总。全程固定独立标签页，不抢占你正在看的页面。
 metadata:
-  version: "26.11.19"
+  version: "26.11.20-a"
 ---
 
 # BOSS直聘自动化投递 Skill
@@ -28,13 +28,13 @@ metadata:
 | 浏览器 | Chrome，需已登录你自己的 BOSS直聘账号 |
 | Kimi WebBridge | 本地端口 10086，需 daemon 运行（`use_skill("kimi-webbridge")`） |
 | Python | 3.9+ |
-| 网络 | 首次运行与定期授权核验需要联网；断网时按本地授权继续 |
+| 网络 | 首次运行与定期核验需要联网；断网时按本机已有状态继续 |
 
 ## 安装
 
 1. 解压到你的 Agent skill 目录（如 `~/.marvis/skills/custom/boss-zhipin-deliver`）
 2. `pip install -r requirements.txt`
-3. 复制 `user_profile.example.json` 为 `user_profile.json` 并填写（首次运行缺该文件时脚本也会自动生成模板并提示必填项）
+3. 复制 `user_profile.example.json` 为 `user_profile.json` 并填写（首次运行缺该文件时脚本会自动生成模板、打印必填项后以退出码 2 结束，不会再抛 Python 堆栈；填好后重跑即可）
 4. Chrome 登录 BOSS直聘、启动 Kimi WebBridge，跑一次环境自检：
    ```
    python scripts/env_check.py
@@ -92,13 +92,16 @@ python scripts/serial_loop.py --step init --ack-risk
 | `auth_fail` | 登录态失效 | 人工重新登录后 `--step init` |
 | `daily_limit` | 触发平台 150 次/日硬顶 | 次日再投 |
 | `comm_limit` | 连续 3 条沟通上限、清障复投均无效 | 人工确认页面状态后 `--step init` |
-| `selector_broken` | 连续 3 次关键按钮/面板找不到 | 多为页面改版，等指令包更新后再跑 |
+| `selector_broken` | 连续 3 次关键按钮/面板找不到 | 多为页面改版，等适配信息更新后再跑 |
 | `consecutive_unknown` | 连续 3 次无法识别投递结果 | 人工核对页面 |
 | `target_reached` | 当日投递目标已达成 | 正常结束，不再续投 |
 
-风控字样检测覆盖投递链路与 JD 读取链路：`jd_reader.py` 命中风控时以**退出码 3** 终止，`deliver_engine` 命中时返回 `risk_control` 状态，二者都会触发停机。
-
 > **给 Agent**：执行前必须通读 `references/execution-manual.md`。判断规则、两级沟通上限处理、运行期禁动页等全部执行口径都在那份文件里，以它为准。
+
+## 运行稳定性
+- 所有状态文件原子写（临时文件 + fsync + os.replace），中断不会留空文件/半截 JSON，重跑即可续投；
+- 页面对齐以当前 DOM 实卡数为唯一真源（`--step next-batch` 重建窗口），队列与页面等长同序，`read/decide` 的 `--index` 即页面卡片位；
+- 跑长任务禁止用管道截断输出（`| Select-Object -First N`、`| head -n N`），管道提前关闭会终止 python 进程；
 
 ## 免费体验与激活
 
@@ -108,26 +111,24 @@ python scripts/serial_loop.py --step init --ack-risk
   ```
   python scripts/entitlement.py --activate <激活码>
   ```
-  激活后授权落在 `~/.boss_zhipin_deliver/license.json`，之后每天直接跑；查看状态 `--status`。
+  激活后本机记录授权状态，之后每天直接跑；查看状态 `--status`。
 - 作者联系方式显示在技能生成的汇报页上；需要激活码或续期时按页面上的方式联系。
 
-## 自动适配说明
+## 页面改版自动适配
 
-平台页面会不定期改版，技能内置了自动适配：联网时向作者服务端获取最新的页面结构配置，加载前做完整性校验，校验不通过则自动沿用随包版本，不影响使用。断网时直接使用随包版本。
+平台页面会不定期改版。技能联网时会自动更新适配信息，拿不到或更新失败就沿用本机已有的版本，不影响使用；断网时直接用本机版本。
 
-授权状态与配置来源可用 `python scripts/cloud_client.py --status` 查看。
+当前状态可用 `python scripts/cloud_client.py --status` 查看。
 
 ## 目录结构
 
 ```
-SKILL.md                      # 本文件：定位、安装、配置
-README.md                     # 快速上手
+SKILL.md                       # 本文件：定位、安装、配置
+README.md                      # 快速上手
 references/execution-manual.md # 执行手册（Agent 必读的细则）
-scripts/                      # 全部执行脚本
-dist/plan.json                # 随包页面结构配置（选择器与时序参数）
-dist/trust_anchor.json        # 配置来源与版本的校验基准
-scripts/plan_guard.py         # 配置完整性校验
-user_profile.example.json     # 画像模板
+scripts/                       # 全部执行脚本
+dist/                          # 运行期资源
+user_profile.example.json      # 画像模板
 ```
 
 ## 注意

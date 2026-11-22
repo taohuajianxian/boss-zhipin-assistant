@@ -1,1 +1,0 @@
-# BOSS skill scripts package

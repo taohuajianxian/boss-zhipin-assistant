@@ -1,42 +1,57 @@
 #!/usr/bin/env python3
-"""
-模块 I: ★三层嵌套循环主控制器 (v5.0)
 
-★ 核心设计 — 严格对应流程图的三层循环:
 
-  外层循环 (页面级):
-    推荐页 → 穷尽 → AI评估 → 新关键词 → 搜索页 → 穷尽 → AI评估 → 新关键词 → ...
-    终止条件: 投递总数达标 (DAILY_TARGET=150)
 
-  中层循环 (分批级):
-    每页分批50条: 滚动加载 → 提取 → AI初筛 → 进入内层 → 内层完 → 下一批
-    终止条件: 页面穷尽 (exhausted=True)
 
-  内层循环 (岗位级):
-    逐条: 读JD → AI判断 → 投递/跳过 → 检查目标 → 下一条
-    终止条件: 本批JD待读取列表处理完
 
-★ 命令体系:
-    --step init          → 检查环境 + 导航到推荐页 (流程图: 开始→检查环境→定位到推荐页)
-    --step next-batch    → 滚动加载下一批50条 (中层循环)
-    --step read --index N    → 读第N条JD (内层循环 步骤A)
-    --step decide --index N  → 执行AI决策+检查目标 (内层循环 步骤B+C)
-    --step evolve        → 页面穷尽后AI评估+新关键词+导航搜索页 (外层循环)
-    --step finish        → 生成HTML汇报 + 授权状态 + 联系方式区 (流程图: 汇总投递岗位)
-    --step status        → 查看三层循环完整进度
 
-信号文件:
-    page_state.json      — 页面级状态 (跨进程持久化)
-    batch_state.json     — 分批级状态 (跨进程持久化)
-    surface_cache.json   — 全量缓存 (分批追加)
-    jd_to_read.json      — AI筛选后的待读取列表
-    current_jd.json      — 当前JD (供AI阅读)
-    decision.json        — AI决策
-    serial_progress.json — 串行进度
-    stream_progress.json — 投递进度 (断点续传)
-"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import os
+import sys
+
+
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 import json
+
+try:
+    from scripts.atomic_io import atomic_dump_json, atomic_write_text
+except ImportError:
+    from atomic_io import atomic_dump_json, atomic_write_text
+
 import os
 import sys
 import time
@@ -51,9 +66,9 @@ from scripts import entitlement as ent
 from scripts import cloud_client as cc
 from scripts import job_filter
 from scripts import stats_core
-from scripts import decision_schema  # v5.8 取证门（结构+evidence 校验）
+from scripts import decision_schema
 
-# 信号文件路径
+
 JD_TO_READ = os.path.join(WORK_DIR, "jd_to_read.json")
 CURRENT_JD = os.path.join(WORK_DIR, "current_jd.json")
 DECISION_FILE = os.path.join(WORK_DIR, "decision.json")
@@ -80,7 +95,7 @@ from scripts.keyword_evolver import (
     load_page_state, save_page_state, reset_page_state,
 )
 from scripts.report_builder import build_report
-# P0-1: 停机原因码统一枚举与渲染（risk_control / comm_limit / daily_limit ...）
+
 from scripts.stop_codes import (
     describe as stop_describe,
     hint_of as stop_hint,
@@ -90,18 +105,17 @@ from scripts.stop_codes import (
 )
 
 
-# ═══════════════════════════════════════════════════════════
-# 串行进度管理
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def _safe_clear(path):
-    """安全重置信号文件：写入 null JSON 完成状态重置。"""
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write('null')
+
+    atomic_write_text(path, 'null')
 
 
 def load_serial_progress():
-    """加载串行进度"""
+
     if os.path.exists(SERIAL_PROGRESS):
         with open(SERIAL_PROGRESS, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -144,12 +158,12 @@ def load_serial_progress():
 
 
 
-# ★ 跨会话去重缓存：统一台账中的 jobId 集合（进程内只算一次）
+
 _DELIVERED_IDS_CACHE = None
 
 
 def _delivered_ids():
-    """返回累计台账里已投递成功/已失败的 jobId 集合（跨会话）"""
+
     global _DELIVERED_IDS_CACHE
     if _DELIVERED_IDS_CACHE is not None:
         return _DELIVERED_IDS_CACHE
@@ -168,30 +182,37 @@ def _delivered_ids():
 
 
 def invalidate_delivered_cache():
-    """投递成功后调用，令下一条岗位能看到最新台账"""
+
     global _DELIVERED_IDS_CACHE
     _DELIVERED_IDS_CACHE = None
 
 
+
+
+
+
+
+
+
+
 def save_serial_progress(progress):
-    """保存串行进度"""
-    with open(SERIAL_PROGRESS, 'w', encoding='utf-8') as f:
-        json.dump(progress, f, ensure_ascii=False, indent=2)
+
+    atomic_dump_json(SERIAL_PROGRESS, progress)
 
 
-# ═══════════════════════════════════════════════════════════
-# P0-1 停机原因码：落库 + 停机闸门（禁止自动重试）
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def _halt(code, detail='', progress=None, fatal=True):
-    """落库停机原因码并打印人话
 
-    参数:
-        code: stop_codes.STOP_CODES 中的原因码
-        detail: 细节（命中词 / URL / 连续次数）
-        progress: 已加载的进度 dict，不传则自行加载
-        fatal: 是否同时置 fatal_stop（投递目标达成时为 False）
-    """
+
+
+
+
+
+
+
     prog = progress if progress is not None else load_serial_progress()
     prog.update(new_stop_record(code, detail))
     if fatal:
@@ -209,10 +230,10 @@ def _halt(code, detail='', progress=None, fatal=True):
 
 
 def _halt_state():
-    """读取停机状态
 
-    返回 (blocked, code, detail)；blocked=True 时后续步骤必须被拦下
-    """
+
+
+
     prog = load_serial_progress()
     code = prog.get('stop_reason') or ''
     if not code:
@@ -225,10 +246,10 @@ def _halt_state():
 
 
 def _halt_guard(step_name=''):
-    """流水线闸门：已停机则拒绝执行当前步骤
 
-    返回 True = 已停机，调用方必须立即返回（禁止任何自动重试）
-    """
+
+
+
     blocked, code, detail = _halt_state()
     if not blocked:
         return False
@@ -246,7 +267,7 @@ def _halt_guard(step_name=''):
 
 
 def ack_stop(note=''):
-    """人工确认后清除停机标记（只由 --ack-risk 触发）"""
+
     prog = load_serial_progress()
     old = prog.get('stop_reason') or ''
     if not old and not prog.get('fatal_stop'):
@@ -265,39 +286,39 @@ def ack_stop(note=''):
 
 
 def load_jobs():
-    """加载 jd_to_read.json"""
+
     if not os.path.exists(JD_TO_READ):
         return []
     with open(JD_TO_READ, 'r', encoding='utf-8') as f:
         jobs = json.load(f)
-    # 空值守卫: 文件内容为 null / 非列表结构时一律降级为空列表，避免下游 len() 崩溃
+
     if isinstance(jobs, dict):
         jobs = jobs.get('jobs') or jobs.get('data') or []
     if not isinstance(jobs, list):
         return []
-    # 顺序守卫: 按 page_order 排序
+
     if jobs and 'page_order' in jobs[0]:
         jobs.sort(key=lambda x: x.get('page_order', 0))
     return jobs
 
 
-# ═══════════════════════════════════════════════════════════
-# ★ 外层循环: 页面级
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def step_init(city_code=_PROFILE_CITY):
-    """★ 流程图: 开始 → 检查环境 → 定位到职位推荐页
 
-    1. 检查 WebBridge 环境
-    2. 重置所有状态（分批状态 + 页面状态）
-    3. 导航到推荐页
-    4. 提示下一步: --step next-batch
-    """
+
+
+
+
+
+
     print("[初始化] ═══ v5.0 三层循环投递系统启动 ═══")
 
-    # 0. 授权门禁（只在 init 边界判一次，运行期绝不中途打断）
+
     snap = ent.gate_at_start()
-    print(f"[授权] {snap['title']} | 指令包 {snap['plan_version'] or '未加载'}（{snap['plan_source']}）")
+    print(f"[授权] {snap['title']} | 适配数据 {snap['plan_version'] or '未加载'}（{snap['plan_source']}）")
     if not snap["allowed"]:
         print(f"[授权] {snap['detail']}")
         print("[授权] 拿到码后执行: python scripts/entitlement.py --activate <CODE>")
@@ -306,7 +327,7 @@ def step_init(city_code=_PROFILE_CITY):
         print("[授权] init 已停止；已经在跑的流水线不会被动到。")
         return False
 
-    # 1. 环境检查
+
     if not health_check():
         print("[初始化] ERROR: WebBridge 不可达")
         print("[初始化] 请先运行: python env_check.py")
@@ -318,26 +339,26 @@ def step_init(city_code=_PROFILE_CITY):
 
     print("[初始化] WebBridge 环境正常")
 
-    # 2. 重置状态
-    reset_state()        # 重置分批状态 (batch_state.json)
-    reset_page_state()   # 重置页面状态 (page_state.json)
 
-    # 清理旧的串行进度
+    reset_state()
+    reset_page_state()
+
+
     _safe_clear(SERIAL_PROGRESS)
     _safe_clear(JD_TO_READ)
 
-    # 3. 导航到推荐页
+
     print("[初始化] 导航到推荐页...")
     page_state = load_page_state()
     page_state['page_type'] = 'recommend'
     page_state['current_keyword'] = ''
     page_state['pages_processed'] = 1
 
-    # 记录本页面开始时的投递数
+
     pm = ProgressManager(PROGRESS_FILE)
     pm.load()
-    # P1 统一口径：起点同样以 stats_core 累计成功数为准（旧口径读 delivered 列表，
-    # 会让 page_delivered 恒等于累计总数，换词决策失真）
+
+
     try:
         from scripts import stats_core as _sc_base
         _base0 = int(_sc_base.compute()['cumulative']['success'])
@@ -350,7 +371,7 @@ def step_init(city_code=_PROFILE_CITY):
         print("[初始化] ERROR: 导航到推荐页失败")
         return False
 
-    # 4. 提示下一步
+
     print(f"\n[初始化] ★ 推荐页已就绪")
     print(f"[初始化] ★ 投递目标: {DAILY_TARGET} 份")
     print(f"[初始化] ★ 下一步: python serial_loop.py --step next-batch")
@@ -360,28 +381,28 @@ def step_init(city_code=_PROFILE_CITY):
 
 
 def step_evolve(city_code=_PROFILE_CITY):
-    """★ 外层循环: 页面穷尽后 → AI评估 → 新关键词 → 搜索页
 
-    流程图: AI评估当前页面投递结果 → 找出新的关键词 → 以新关键词搜索 → 定位到搜索结果页
 
-    1. 评估当前页面的投递结果
-    2. 获取下一个未尝试的搜索关键词
-    3. 如果有可用关键词 → 导航到搜索页 → 提示 --step next-batch
-    4. 如果无可用关键词 → 提示AI生成新关键词 (--step add-keyword)
-    5. 如果投递目标已达标 → 提示 --step finish
-    """
+
+
+
+
+
+
+
+
     print("[进化] ═══ 外层循环: 页面穷尽，开始关键词进化 ═══")
 
-    # 0. 先检查投递目标是否已达标
+
     target_check = check_delivery_target(PROGRESS_FILE)
     if target_check["target_met"]:
         print(f"[进化] ★ 投递目标 {DAILY_TARGET} 份已达标！无需继续搜索")
-        # ★ 自动触发 finish，确保 100% 生成投递汇总页面
+
         print(f"[进化] ★ 自动生成投递汇总...")
         step_finish()
         return True
 
-    # 1. 评估当前页面投递结果
+
     print(f"\n[进化] 步骤1: 评估当前页面投递结果")
     eval_result = evaluate_page_results()
 
@@ -392,7 +413,7 @@ def step_evolve(city_code=_PROFILE_CITY):
     print(f"  行业分布: {eval_result['industry_distribution']}")
     print(f"  高频标题词: {eval_result['title_keywords']}")
 
-    # 2. 获取下一个关键词
+
     print(f"\n[进化] 步骤2: 获取下一个搜索关键词")
     next_kw = get_next_keyword()
 
@@ -416,37 +437,37 @@ def step_evolve(city_code=_PROFILE_CITY):
 
 
 def step_navigate_search(keyword, city_code=_PROFILE_CITY):
-    """导航到搜索结果页（外层循环的页面切换）
 
-    流程图: 以新关键词搜索岗位 → 定位到搜索结果页 → 回到"当前页面处理开始"
-    """
+
+
+
     print(f"[搜索] ═══ 导航到搜索结果页: {keyword} ═══")
 
     if not health_check():
         print("[搜索] ERROR: WebBridge 不可达")
         return False
 
-    # 导航到搜索页
+
     ok, clean_kw = navigate_to_search(keyword, city_code)
     if not ok:
         print(f"[搜索] ERROR: 导航到搜索页失败 (关键词: {keyword})")
         print(f"[搜索] 该关键词可能无搜索结果，请尝试其他关键词")
         return False
 
-    # 标记关键词为已尝试（使用清洗后的关键词）
+
     mark_keyword_tried(clean_kw)
 
-    # 更新页面状态
+
     page_state = load_page_state()
     page_state['page_type'] = 'search'
     page_state['current_keyword'] = keyword
     page_state['pages_processed'] = page_state.get('pages_processed', 0) + 1
 
-    # 记录本页面开始时的投递数
+
     pm = ProgressManager(PROGRESS_FILE)
     pm.load()
-    # P1 统一口径：起点同样以 stats_core 累计成功数为准（旧口径读 delivered 列表，
-    # 会让 page_delivered 恒等于累计总数，换词决策失真）
+
+
     try:
         from scripts import stats_core as _sc_base
         _base0 = int(_sc_base.compute()['cumulative']['success'])
@@ -455,7 +476,7 @@ def step_navigate_search(keyword, city_code=_PROFILE_CITY):
     page_state['page_start_delivered'] = _base0
     save_page_state(page_state)
 
-    # 重置分批状态（新页面从0开始）
+
     reset_state()
 
     print(f"\n[搜索] ★ 搜索结果页已就绪")
@@ -468,31 +489,31 @@ def step_navigate_search(keyword, city_code=_PROFILE_CITY):
 
 
 def step_add_keyword(keyword):
-    """添加AI进化生成的新关键词"""
+
     add_evolved_keyword(keyword)
     print(f"[进化] 已添加新关键词: {keyword}")
     print(f"[进化] 下一步: python serial_loop.py --step navigate-search --keyword \"{keyword}\"")
 
 
-# ═══════════════════════════════════════════════════════════
-# ★ 中层循环: 分批级
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def build_page_window(total_cards=None):
-    """★ 索引对齐核心: 从 surface_cache 重建"当前页面顺序"窗口
 
-    原理:
-        BOSS 推荐页左侧卡片按 DOM 顺序排列, surface_cache 按滚动顺序累计追加。
-        最近 total_cards 条即"当前页面从头到尾的全部卡片", 其序位 1..N 就是
-        read --index N 实际点击的卡片位置。
 
-    约束:
-        jd_to_read.json 必须与该窗口**等长同序**（被规则排除的条目留占位标 skip）,
-        否则序号与卡片错位, 表现为点错岗位 / 右侧面板校验失败 / no_link_match。
 
-    返回:
-        dict: {"total_cards": n, "generated_at": str, "jobs": [...]} 或 None
-    """
+
+
+
+
+
+
+
+
+
+
+
     cache = []
     if os.path.exists(SURFACE_CACHE):
         try:
@@ -500,20 +521,42 @@ def build_page_window(total_cards=None):
                 cache = json.load(f) or []
         except Exception:
             cache = []
-    if not cache:
-        return None
 
-    if total_cards is None:
-        try:
-            total_cards = int(get_state().get("total_cards") or 0)
-        except Exception:
-            total_cards = 0
-    if not total_cards or total_cards > len(cache):
-        total_cards = len(cache)
 
-    tail = cache[-total_cards:]
+
+
+    dom_cards = []
+    try:
+        dom_cards = _dom_cards() or []
+    except Exception:
+        dom_cards = []
+
+    if dom_cards:
+        source = dom_cards
+        total_cards = len(dom_cards)
+
+        if cache:
+            n = min(len(source), len(cache))
+            for k in range(n):
+                cache[len(cache) - n + k] = {**cache[len(cache) - n + k], **source[k]}
+            try:
+                atomic_dump_json(SURFACE_CACHE, cache, indent=None)
+            except Exception:
+                pass
+    else:
+        if not cache:
+            return None
+        if total_cards is None:
+            try:
+                total_cards = int(get_state().get("total_cards") or 0)
+            except Exception:
+                total_cards = 0
+        if not total_cards or total_cards > len(cache):
+            total_cards = len(cache)
+        source = cache[-total_cards:]
+
     jobs = []
-    for pos, j in enumerate(tail, start=1):
+    for pos, j in enumerate(source, start=1):
         jobs.append({
             "page_index": pos,
             "jobId": j.get("jobId", ""),
@@ -530,19 +573,18 @@ def build_page_window(total_cards=None):
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "jobs": jobs,
     }
-    with open(PAGE_WINDOW, "w", encoding="utf-8") as f:
-        json.dump(window, f, ensure_ascii=False, indent=2)
+    atomic_dump_json(PAGE_WINDOW, window, indent=2)
     return window
 
 
 def step_next_batch():
-    """★ 中层循环: 滚动加载下一批50条 + 重建页面对齐窗口
 
-    1. 检查页面是否已穷尽（穷尽 -> 提示 --step evolve）
-    2. 未穷尽 -> 滚动加载一批 -> 增量提取 -> append 缓存
-    3. ★ 滚动后立即用 surface_cache 尾部 total_cards 条重建页面对齐窗口
-    4. 输出窗口清单（索引 = 页面卡片位置），提示 --step build-queue 生成对齐队列
-    """
+
+
+
+
+
+
     if not health_check():
         print("ERROR: WebBridge 不可达")
         return False
@@ -565,7 +607,8 @@ def step_next_batch():
         page_type = page_state.get('page_type', 'recommend')
         current_kw = page_state.get('current_keyword', '')
 
-        # ★ 索引对齐：滚动后立即重建窗口
+
+
         window = build_page_window(result["total_cards"])
         if window:
             print(f"\n{'='*62}")
@@ -595,15 +638,15 @@ def step_next_batch():
 
 
 def step_build_queue(limit=0):
-    """★ 生成页面对齐队列 jd_to_read.json（规则层粗筛 + 等长占位）
 
-    关键设计:
-        队列长度 == 窗口长度, 规则层 REJECT 的条目不清除, 只标 skip + 理由。
-        => jd_to_read.json 的第 N 条永远等于页面第 N 张卡片, 索引不再错位。
 
-    输出:
-        jd_to_read.json  每条含 page_index / page_order / rule_verdict / rule_reason / skip
-    """
+
+
+
+
+
+
+
     window = None
     if os.path.exists(PAGE_WINDOW):
         try:
@@ -638,8 +681,7 @@ def step_build_queue(limit=0):
     if limit and limit > 0:
         queue = queue[:limit]
 
-    with open(JD_TO_READ, "w", encoding="utf-8") as f:
-        json.dump(queue, f, ensure_ascii=False, indent=2)
+    atomic_dump_json(JD_TO_READ, queue, indent=2)
 
     print(f"\n[队列] 页面对齐队列已生成: {len(queue)} 条（与页面卡片等长同序）")
     print(f"[队列] 规则层结果: PASS {stats['PASS']} | REVIEW {stats['REVIEW']} | REJECT {stats['REJECT']}")
@@ -664,16 +706,16 @@ def step_build_queue(limit=0):
 
 
 
-# ═══════════════════════════════════════════════════════════
-# ★ 内层循环: 岗位级
-# ═══════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════
-# ★ 读取前索引对齐（P0 治本：页面漂移不靠序号硬点）
-# ═══════════════════════════════════════════════════════════
+
+
+
+
+
+
 
 def _dom_cards():
-    """取当前推荐页真实卡片顺序；失败返回 []"""
+
     try:
         from scripts.webbridge_client import extract_jobs as _ej
         return _ej() or []
@@ -683,30 +725,28 @@ def _dom_cards():
 
 
 def _sync_queue_positions(jobs):
-    """把校正后的 page_index/page_order 回写 jd_to_read.json 与 page_window.json"""
+
     try:
-        with open(JD_TO_READ, "w", encoding="utf-8") as f:
-            json.dump(jobs, f, ensure_ascii=False, indent=2)
+        atomic_dump_json(JD_TO_READ, jobs, indent=2)
         win = {"total_cards": len(jobs),
                "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                "jobs": [{k: j.get(k, "") for k in
                          ("page_index", "jobId", "title", "salary", "company", "industry", "city")}
                         for j in jobs]}
-        with open(PAGE_WINDOW, "w", encoding="utf-8") as f:
-            json.dump(win, f, ensure_ascii=False, indent=2)
+        atomic_dump_json(PAGE_WINDOW, win, indent=2)
     except Exception as e:
         print(f"[对齐] 警告: 队列回写失败 {e}")
 
 
 def align_queue_index(jobs, index):
-    """读取前按当前 DOM 真实卡片顺序校正队列索引
 
-    规范：
-      1) 队列第 N 条的 jobId 在当前页面命中 → 把 page_index 校正为真实卡片位
-      2) jobId 未命中但标题+公司可对上 → 用当前卡片的 jobId 回填并重定位
-      3) 完全失联 → 标 stale，调用方落 REJECT 跳过，绝不猜测、绝不误投
-    返回: (ok: bool, note: str)
-    """
+
+
+
+
+
+
+
     if index < 1 or index > len(jobs):
         return True, ""
     cur = jobs[index - 1]
@@ -742,10 +782,10 @@ def align_queue_index(jobs, index):
 
 
 def step_read(index):
-    """★ 内层循环 步骤A: 读取第 index 条JD
 
-    流程图: 取序号最靠前的待处理岗位 → 点击标签卡读取右侧JD
-    """
+
+
+
     jobs = load_jobs()
     if not jobs:
         print("ERROR: jd_to_read.json 为空或不存在")
@@ -766,14 +806,12 @@ def step_read(index):
     print(f"[串行] ═══ 内层循环 [{index}/{len(jobs)}] ═══")
     print(f"[串行] page_order={page_order}")
 
-    # ★ P0 治本：读取前用当前 DOM 对齐索引（页面漂移不再靠序号硬点）
+
     _align_ok, _align_note = align_queue_index(jobs, index)
     if _align_note:
         print(f"[对齐] {_align_note}")
     if not _align_ok:
-        with open(DECISION_FILE, 'w', encoding='utf-8') as _f:
-            json.dump({'decision': 'REJECT', 'reason': '岗位已不在当前页面（漂移失联），跳过不猜测'},
-                      _f, ensure_ascii=False, indent=2)
+        atomic_dump_json(DECISION_FILE, {'decision': 'REJECT', 'reason': '岗位已不在当前页面（漂移失联），跳过不猜测'}, indent=2)
         _pg = load_serial_progress()
         _pg['current_index'] = index
         _pg['total'] = len(jobs)
@@ -787,12 +825,10 @@ def step_read(index):
     salary = job.get('salary', '')
     page_order = job.get('page_order', '?')
 
-    # ★ 跨会话去重：统一台账（jobId 去重）里已投递成功的岗位不再重复投递
+
     if jid and jid in _delivered_ids():
         print(f"[串行] 已投递过，跳过重复投递: {title} | {company}")
-        with open(DECISION_FILE, 'w', encoding='utf-8') as _f:
-            json.dump({'decision': 'REJECT', 'reason': '重复投递拦截: 该 jobId 已在累计台账中投递成功'},
-                      _f, ensure_ascii=False, indent=2)
+        atomic_dump_json(DECISION_FILE, {'decision': 'REJECT', 'reason': '重复投递拦截: 该 jobId 已在累计台账中投递成功'}, indent=2)
         _pg = load_serial_progress()
         _pg['current_index'] = index
         _pg['total'] = len(jobs)
@@ -801,14 +837,12 @@ def step_read(index):
         print(f"★ 下一步: python serial_loop.py --step decide --index {index}")
         return True
 
-    # ★ 规则层已硬排除的岗位：不读 JD，直接落 REJECT（索引占位保持对齐）
+
     if job.get('skip'):
         _why = job.get('rule_reason') or '规则层硬排除'
         print(f"[串行] 规则排除，跳过读取: {title} | {company}")
         print(f"[串行] 排除理由: {_why}")
-        with open(DECISION_FILE, 'w', encoding='utf-8') as _f:
-            json.dump({'decision': 'REJECT', 'reason': f'规则排除: {_why}'},
-                      _f, ensure_ascii=False, indent=2)
+        atomic_dump_json(DECISION_FILE, {'decision': 'REJECT', 'reason': f'规则排除: {_why}'}, indent=2)
         _pg = load_serial_progress()
         _pg['current_index'] = index
         _pg['total'] = len(jobs)
@@ -833,37 +867,13 @@ def step_read(index):
         print(f"[串行] ★ 正确做法: 立即停止，提示用户当前状态，等待用户指示。")
         print(f"[串行] ★ 禁止: 刷新页面、切换标签页、navigate、滚动重试（方向错误）。")
         print(f"[串行] ★ 若确需恢复，只能由用户确认后执行 --step init 重定位推荐页。")
-        with open(CURRENT_JD, 'w', encoding='utf-8') as f:
-            json.dump({
-                'index': index,
-                'total': len(jobs),
-                'jobId': jid,
-                'title': title,
-                'company': company,
-                'salary': salary,
-                'page_order': page_order,
-                'jd_text': '',
-                'error': result.get('detail', ''),
-                'surface_info': job,
-            }, f, ensure_ascii=False, indent=2)
+        atomic_dump_json(CURRENT_JD, { 'index': index, 'total': len(jobs), 'jobId': jid, 'title': title, 'company': company, 'salary': salary, 'page_order': page_order, 'jd_text': '', 'error': result.get('detail', ''), 'surface_info': job, }, indent=2)
         return False
 
     jd_data = result.get('jd', {})
     jd_text = jd_data.get('jd_text', '')
 
-    with open(CURRENT_JD, 'w', encoding='utf-8') as f:
-        json.dump({
-            'index': index,
-            'total': len(jobs),
-            'jobId': jid,
-            'title': title,
-            'company': company,
-            'salary': salary,
-            'page_order': page_order,
-            'jd_text': jd_text,
-            'jd_full': jd_data,
-            'surface_info': job,
-        }, f, ensure_ascii=False, indent=2)
+    atomic_dump_json(CURRENT_JD, { 'index': index, 'total': len(jobs), 'jobId': jid, 'title': title, 'company': company, 'salary': salary, 'page_order': page_order, 'jd_text': jd_text, 'jd_full': jd_data, 'surface_info': job, }, indent=2)
 
     print(f"[串行] JD已写入 current_jd.json (共{len(jd_text)}字)")
     print(f"[串行] ★ 等待AI阅读 current_jd.json 并给出决策")
@@ -872,7 +882,7 @@ def step_read(index):
     print(f"  python serial_loop.py --step write-decision --decision REJECT --reason \"理由\"")
     print(f"[串行] ★ 然后执行: python serial_loop.py --step decide --index {index}")
 
-    # 更新进度
+
     progress = load_serial_progress()
     progress['current_index'] = index
     progress['total'] = len(jobs)
@@ -882,19 +892,19 @@ def step_read(index):
 
 
 def step_write_decision(decision, reason='', sub_json='', evidence_json='', sub_file='', evidence_file=''):
-    """★ v5.7 新增: AI 通过命令行直接覆写 decision.json
 
-    目的: 统一由脚本覆写 decision.json，保证内容始终是最新一轮决策结果。
-    用法: python serial_loop.py --step write-decision --decision APPROVE --reason "理由"
-    脚本内部使用 open('w') 直接覆写，幂等安全。
-    """
+
+
+
+
+
     decision = str(decision).upper()
     if decision not in ('APPROVE', 'REJECT'):
         print(f"ERROR: --decision 必须是 APPROVE 或 REJECT，实际: {decision}")
         return False
 
-    # ★ v5.8 结构化决策：固定结构 + 四项子判定 + 证据 + 提示词版本
-    # 结构固定后，取证门才能逐项比对 evidence 与 JD 原文；缺字段不再靠自由文本猜
+
+
     data = {"decision": decision, "reason": reason}
 
     def _read_json_file(path, label):
@@ -903,7 +913,7 @@ def step_write_decision(decision, reason='', sub_json='', evidence_json='', sub_
         try:
             with open(path, "r", encoding="utf-8") as _f:
                 raw = _f.read()
-            json.loads(raw)  # 合法性预检
+            json.loads(raw)
             return raw
         except Exception as _e:
             print(f"[决策] ⚠ {label} 文件不可用({path}): {_e}")
@@ -918,8 +928,8 @@ def step_write_decision(decision, reason='', sub_json='', evidence_json='', sub_
             print(f"[决策] ⚠ {label} 不是合法 JSON，已忽略: {_e}")
             return None
 
-    # 文件方式优先：Windows PowerShell 下内联 JSON 的双引号会被吞，
-    # 曾表现为"静默降级成无结构决策"，因此提供 --sub-file / --evidence-file
+
+
     _sub = _parse_json_arg(_read_json_file(sub_file, '--sub-file') or sub_json, '--sub-json')
     _ev = _parse_json_arg(_read_json_file(evidence_file, '--evidence-file') or evidence_json, '--evidence-json')
     try:
@@ -935,7 +945,7 @@ def step_write_decision(decision, reason='', sub_json='', evidence_json='', sub_
     if _ev:
         data['evidence'] = _ev
 
-    # 写入前做一次结构预检（只提示，不阻断：shadow 阶段先看数据质量）
+
     try:
         _missing = decision_schema.missing_fields(data)
         if _missing:
@@ -943,9 +953,8 @@ def step_write_decision(decision, reason='', sub_json='', evidence_json='', sub_
     except Exception:
         pass
 
-    # 覆写 decision.json，写入本轮决策
-    with open(DECISION_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False)
+
+    atomic_dump_json(DECISION_FILE, data, indent=2)
     print(f"[决策] ✓ decision.json 已覆写: {decision}")
     if reason:
         print(f"[决策] 理由: {reason}")
@@ -954,11 +963,11 @@ def step_write_decision(decision, reason='', sub_json='', evidence_json='', sub_
 
 
 def step_decide(index):
-    """★ 内层循环 步骤B+C: 执行AI决策 + 检查投递目标
 
-    流程图: 是否投递？ → 是 → 点击"立即沟通" → 总投递数量是否满足要求？
-                        → 否 → 将该岗位标记为已处理
-    """
+
+
+
+
     if not os.path.exists(DECISION_FILE):
         print(f"ERROR: {DECISION_FILE} 不存在，AI尚未做决策")
         print(f"★ AI请先阅读 current_jd.json，然后写入 decision.json")
@@ -970,8 +979,8 @@ def step_decide(index):
     decision = decision_data.get('decision', '').upper()
     reason = decision_data.get('reason', '')
 
-    # ★ v5.8 取证门：结构校验 + evidence 与 JD 原文比对
-    # shadow（默认）：只记录不拦截，产出一周「无证据 APPROVE 占比」；enforce：证据不合格强制改判
+
+
     try:
         _jd_text = ''
         if os.path.exists(CURRENT_JD):
@@ -990,8 +999,7 @@ def step_decide(index):
                 reason = f"取证门拦截: {'; '.join(_gate['errors'])[:120]}"
                 decision_data['decision'] = decision
                 decision_data['reason'] = reason
-                with open(DECISION_FILE, 'w', encoding='utf-8') as _f:
-                    json.dump(decision_data, _f, ensure_ascii=False, indent=2)
+                atomic_dump_json(DECISION_FILE, decision_data, indent=2)
                 print("[串行] ⚠ APPROVE 被取证门强制改判 REJECT")
         elif _gate.get('warnings'):
             print(f"[串行] · 取证门观察{len(_gate['warnings'])}项: {_gate['warnings'][0][:120]}")
@@ -1011,15 +1019,14 @@ def step_decide(index):
     print(f"[串行] 理由: {reason}")
 
     progress = load_serial_progress()
-    # ★ 去重第三层：该 jobId 已在累计台账中投递成功，禁止二次投递
+
     if decision == 'APPROVE' and jid and jid in _delivered_ids():
         print("[串行] ⚠ 去重拦截: 该岗位已在累计台账中投递成功，禁止重复投递")
         decision = 'REJECT'
         reason = '重复投递拦截: 累计台账已存在该 jobId 的投递记录'
-        with open(DECISION_FILE, 'w', encoding='utf-8') as _f:
-            json.dump({'decision': 'REJECT', 'reason': reason}, _f, ensure_ascii=False, indent=2)
+        atomic_dump_json(DECISION_FILE, {'decision': 'REJECT', 'reason': reason}, indent=2)
 
-    # ★ 判定精度第二层：规则硬排除的岗位，AI 无权放行
+
     if decision == 'APPROVE':
         _r = job_filter.rule_screen(job)
         if _r['verdict'] == 'REJECT':
@@ -1027,8 +1034,7 @@ def step_decide(index):
             print(f"[串行] ⚠ APPROVE 被强制改判 REJECT（规则层优先）")
             decision = 'REJECT'
             reason = f"规则拦截: {_r['reason']}"
-            with open(DECISION_FILE, 'w', encoding='utf-8') as _f:
-                json.dump({'decision': 'REJECT', 'reason': reason}, _f, ensure_ascii=False, indent=2)
+            atomic_dump_json(DECISION_FILE, {'decision': 'REJECT', 'reason': reason}, indent=2)
 
     result_entry = {
         'index': index,
@@ -1040,7 +1046,7 @@ def step_decide(index):
     }
 
     if decision == 'APPROVE':
-        # 流程图: 点击"立即沟通" → 弹窗中点击"留在此页" → 投递成功
+
         print(f"[串行] 执行投递: {title} ({jid[:16]}...)")
 
         if not health_check():
@@ -1054,7 +1060,7 @@ def step_decide(index):
         print(f"[串行] 投递结果: {status} - {detail}")
         invalidate_delivered_cache()
 
-        # ★ P0-1 风控命中 / 登录失效：立即停机，禁止清障复投与任何自动重试
+
         if status in ('risk_control', 'login_expired'):
             _code = 'risk_control' if status == 'risk_control' else 'auth_fail'
             pm0 = ProgressManager(PROGRESS_FILE)
@@ -1071,7 +1077,7 @@ def step_decide(index):
             step_finish()
             return True
 
-        # comm_limit 先清障再复投一次——多数 comm_limit 是叠加遮罩挡住点击的假失败
+
         if status == 'comm_limit':
             _cleared = handle_popup()
             _left = popup_residue()
@@ -1090,13 +1096,13 @@ def step_decide(index):
             else:
                 print(f"[串行] 清障未净，残留 {_left} 个遮罩，按 comm_limit 记录")
 
-        # 记录到 ProgressManager
+
         pm = ProgressManager(PROGRESS_FILE)
         pm.load()
         if status == 'success':
             pm.add_delivered(jid, job)
             progress['consecutive_comm_count'] = 0
-            # 免费额度按自然日计数；失败不影响主流程
+
             try:
                 ent.record_delivery(1)
             except Exception:
@@ -1105,30 +1111,30 @@ def step_decide(index):
             pm.add_failed(jid, job, f"{status}: {detail}")
         pm.save()
 
-        # ★ 流程图: 总投递数量是否满足要求？
+
         target_check = check_delivery_target(PROGRESS_FILE)
 
-        # 致命错误检测
+
         if status == 'fatal_limit':
             print(f"[串行] ★★★ 致命错误: 每日上限！停止所有投递 ★★★")
             progress['target_met'] = target_check['target_met']
-            # P0-1: 停机原因码落库
+
             _halt('daily_limit', detail, progress)
-            # ★ 自动触发 finish，确保 100% 生成投递汇总页面
+
             print(f"[串行] ★ 自动生成投递汇总...")
             step_finish()
             return True
 
-        # 单条 comm_limit 不阻断（120 是提示，150 才是硬顶，硬顶由 fatal_limit 拦）；
-        # deliver_inplace 已做 preflight 清障 + 清障后复投，仍连续多条 comm_limit 说明遮罩清不干净
-        # 或平台真封顶，继续投只会把假失败刷满进度文件，故做连续熔断并提示人工确认。
+
+
+
         if status == 'comm_limit':
             progress['consecutive_comm_count'] = progress.get('consecutive_comm_count', 0) + 1
             print(f"[串行] ★ 沟通上限提示(120次): 清障复投仍失败 "
                   f"(连续 {progress['consecutive_comm_count']}/{MAX_CONSECUTIVE_COMM})")
             progress['target_met'] = target_check['target_met']
             if progress['consecutive_comm_count'] >= MAX_CONSECUTIVE_COMM:
-                # P0-1: 停机原因码落库（人工介入类）
+
                 _halt('comm_limit',
                       f"连续{MAX_CONSECUTIVE_COMM}次comm_limit，疑似页面遮罩残留或已达平台上限",
                       progress)
@@ -1138,10 +1144,10 @@ def step_decide(index):
                 step_finish()
                 return True
             save_serial_progress(progress)
-            # 不设 fatal_stop，不 finish，继续下一条投递
+
             return True
 
-        # ★ 页面结构异常熔断（按钮/卡片定位失败，多为 BOSS 改版）
+
         if status == 'selector_broken':
             progress['consecutive_selector_count'] = progress.get('consecutive_selector_count', 0) + 1
             print(f"[串行] ★ 页面结构异常计数: "
@@ -1159,96 +1165,96 @@ def step_decide(index):
         else:
             progress['consecutive_selector_count'] = 0
 
-        # ★ 连续 unknown 状态熔断检测
+
         if status == 'unknown':
             progress['consecutive_unknown_count'] = progress.get('consecutive_unknown_count', 0) + 1
             print(f"[串行] ★ 连续 unknown 计数: {progress['consecutive_unknown_count']}/{MAX_CONSECUTIVE_UNKNOWN}")
             if progress['consecutive_unknown_count'] >= MAX_CONSECUTIVE_UNKNOWN:
                 print(f"[串行] ★★★ 连续 {MAX_CONSECUTIVE_UNKNOWN} 次投递结果 unknown，疑似每日上限或页面异常，熔断停止 ★★★")
                 progress['target_met'] = target_check['target_met']
-                # P0-1: 停机原因码落库
+
                 _halt('consecutive_unknown',
                       f"连续{MAX_CONSECUTIVE_UNKNOWN}次投递结果unknown，疑似每日上限", progress)
                 print(f"[串行] ★ 自动生成投递汇总...")
                 step_finish()
                 return True
         else:
-            # 非 unknown（success / fail 等），重置计数器
+
             progress['consecutive_unknown_count'] = 0
 
         if target_check["target_met"]:
             print(f"\n[串行] ★★★ 投递目标 {DAILY_TARGET} 份已达成！★★★")
             progress['target_met'] = True
-            # P0-1: 目标达成同样落原因码（非故障，fatal=False）
+
             _halt('target_reached',
                   f"已投递 {target_check.get('delivered_count', DAILY_TARGET)} 份"
                   f"，达成目标 {DAILY_TARGET}", progress, fatal=False)
-            # 仍然标记本条为已处理
+
             if index not in progress.get('processed', []):
                 progress.setdefault('processed', []).append(index)
             progress.setdefault('results', []).append(result_entry)
             save_serial_progress(progress)
             if os.path.exists(DECISION_FILE):
                 _safe_clear(DECISION_FILE)
-            # ★ 自动触发 finish，确保 100% 生成投递汇总页面
+
             print(f"[串行] ★ 自动生成投递汇总...")
             step_finish()
             return True
 
     elif decision == 'REJECT':
-        # 流程图: 将该岗位标记为已处理
+
         print(f"[串行] 跳过: {title}")
         result_entry['deliver_status'] = 'skipped'
     else:
         print(f"ERROR: 无效决策 '{decision}'，必须是 APPROVE 或 REJECT")
         return False
 
-    # 标记为已处理
+
     if index not in progress.get('processed', []):
         progress.setdefault('processed', []).append(index)
     progress.setdefault('results', []).append(result_entry)
     save_serial_progress(progress)
 
-    # 清理 decision.json
+
     if os.path.exists(DECISION_FILE):
         _safe_clear(DECISION_FILE)
 
     print(f"[串行] ✓ 第{index}条处理完成")
 
-    # ★ 提示下一步 — 根据流程图判断走向
+
     if progress.get('target_met'):
         print(f"[串行] ★ 投递目标已达成")
         print(f"[串行] ★ 下一步: python serial_loop.py --step finish")
     elif index < len(jobs):
-        # 本批还有待处理岗位 → 继续内层循环
+
         print(f"[串行] 下一条: python serial_loop.py --step read --index {index+1}")
     else:
-        # 本批处理完 → 检查页面是否还有更多岗位（中层循环）
+
         print(f"[串行] ★ 本批{len(jobs)}条已全部处理完毕！")
         if is_exhausted():
-            # 页面穷尽 → 外层循环
+
             print(f"[串行] ★ 当前页面已穷尽")
             print(f"[串行] ★ 下一步: python serial_loop.py --step evolve")
         else:
-            # 页面还有更多岗位 → 中层循环
+
             print(f"[串行] ★ 当前页面还有更多岗位可加载")
             print(f"[串行] ★ 下一步: python serial_loop.py --step next-batch")
 
     return True
 
 
-# ═══════════════════════════════════════════════════════════
-# ★ 终止: 生成汇报
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def step_finish():
-    """★ 流程图: 汇总投递岗位 → 生成HTML汇报（授权状态 + 联系方式区）
 
-    终止条件达成时调用:
-    - 投递目标达标
-    - 致命错误（每日上限）
-    - 所有页面穷尽且无新关键词
-    """
+
+
+
+
+
+
     print("[完成] ═══ 生成投递汇报 ═══")
 
     output_path = os.path.join(WORK_DIR, "投递汇总.html")
@@ -1263,7 +1269,7 @@ def step_finish():
         if snap["wechat_id"]:
             print(f"[完成] 联系方式: {snap['wechat_id']}")
 
-        # 显示最终统计
+
         target_check = check_delivery_target(PROGRESS_FILE)
         page_state = load_page_state()
         batch_state = get_state()
@@ -1280,7 +1286,7 @@ def step_finish():
         print(f"总滚动次数: {batch_state.get('total_scrolls', 0)} 次")
 
         progress = load_serial_progress()
-        # P0-1: 优先展示停机原因码（代码 + 人话 + 处置建议）
+
         if progress.get('stop_reason'):
             print(f"停机原因码: {progress['stop_reason']}")
             print(f"停止原因: {stop_describe(progress['stop_reason'], progress.get('stop_detail', ''))}")
@@ -1301,19 +1307,19 @@ def step_finish():
     return result is not None
 
 
-# ═══════════════════════════════════════════════════════════
-# ★ 状态查看
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def step_status():
-    """查看三层循环完整进度"""
+
     snap = ent.status_snapshot()
     progress = load_serial_progress()
     jobs = load_jobs() or []
     batch_state = get_state()
     page_state = load_page_state()
     target_check = check_delivery_target(PROGRESS_FILE)
-    # ★ 统一统计口径：所有对外数字（status / HTML / finish）只从 stats_core 出
+
     _stats = stats_core.compute(WORK_DIR)
     stats_core.save_unified(_stats)
     _cum = _stats["cumulative"]
@@ -1332,13 +1338,13 @@ def step_status():
     print(f"v5.0 三层循环进度")
     print(f"{'='*60}")
     print(f"授权        : {snap['title']}（{snap['mode']}）")
-    print(f"指令包      : {snap['plan_version'] or '未加载'}  来源 {snap['plan_source']}")
+    print(f"适配数据      : {snap['plan_version'] or '未加载'}  来源 {snap['plan_source']}")
     print(f"免费额度    : 今天 {snap['free_used_today']}/{snap['free_limit']} 份"
           f"  首日 {snap['free_first_day']}")
     if snap["wechat_id"]:
         print(f"联系方式    : {snap['wechat_id']}")
 
-    # 外层: 页面级
+
     print(f"\n┌─ 外层循环 (页面级) ──────────────────────")
     print(f"│ 页面类型: {page_state.get('page_type', '?')}")
     print(f"│ 当前关键词: {page_state.get('current_keyword', '(推荐页)')}")
@@ -1346,7 +1352,7 @@ def step_status():
     print(f"│ 已尝试关键词: {len(page_state.get('tried_keywords', []))} 个")
     print(f"│ 进化关键词: {len(page_state.get('evolved_keywords', []))} 个")
 
-    # 中层: 分批级
+
     print(f"│")
     print(f"├─ 中层循环 (分批级) ──────────────────────")
     print(f"│ 当前批次: 第{batch_state.get('batch_num', 0)}批")
@@ -1355,7 +1361,7 @@ def step_status():
     print(f"│ 累计滚动: {batch_state.get('total_scrolls', 0)}次")
     print(f"│ 穷尽: {batch_state.get('exhausted', False)} ({batch_state.get('exhaust_reason', '')})")
 
-    # 内层: 岗位级
+
     print(f"│")
     print(f"├─ 内层循环 (岗位级) ──────────────────────")
     print(f"│ jd_to_read.json: {total}条待处理")
@@ -1370,7 +1376,7 @@ def step_status():
     print(f"│   本次会话投递成功: {_ses['success']}")
     print(f"│ 剩余: {total - len(processed)}")
 
-    # 目标
+
     print(f"│")
     print(f"├─ 投递目标 ──────────────────────────────")
     print(f"│ 目标: {target_check['target']} 份")
@@ -1384,7 +1390,7 @@ def step_status():
         print(f"│ 口径提示: {_stats['conflicts']} 条在两源状态冲突，已按 success>failed 取优")
     print(f"│ 统一台账: {stats_core.UNIFIED_FILE}")
 
-    # 停止状态
+
     if progress.get('stop_reason'):
         print(f"│")
         print(f"├─ ⛔ 停机状态 ────────────────────────────")
@@ -1406,14 +1412,14 @@ def step_status():
 
     print(f"└───────────────────────────────────────────")
 
-    # 最近5条结果
+
     if processed:
         print(f"\n最近5条结果:")
         for r in results[-5:]:
             icon = '✓' if r.get('deliver_status') == 'success' else '✗' if r.get('decision') == 'REJECT' else '?'
             print(f"  {icon} [{r['index']}] {r['title'][:25]} → {r['decision']} ({r.get('deliver_status', '')})")
 
-    # 下一步提示
+
     print(f"\n★ 下一步建议:")
     if progress.get('fatal_stop') or progress.get('target_met'):
         print(f"  python serial_loop.py --step finish")
@@ -1428,19 +1434,19 @@ def step_status():
         next_idx = min(i for i in range(1, total+1) if i not in processed)
         print(f"  python serial_loop.py --step read --index {next_idx}")
     else:
-        # 本批处理完
+
         if is_exhausted():
             print(f"  python serial_loop.py --step evolve")
         else:
             print(f"  python serial_loop.py --step next-batch")
 
 
-# ═══════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def _ensure_finish_on_exit():
-    """atexit 钩子：无论何种退出路径，只要有投递记录就生成汇报（幂等）。"""
+
     import os as _os
     import json as _json
     try:
@@ -1453,12 +1459,12 @@ def _ensure_finish_on_exit():
         has_records = bool(data.get('delivered') or data.get('failed'))
         if not has_records:
             return
-        # 如果汇报文件不存在 或 进度文件比汇报文件新 → 需要重新生成
+
         if not _os.path.exists(report_file) or _os.path.getmtime(progress_file) > _os.path.getmtime(report_file):
             print("[收尾] ═══ 自动生成投递汇总（atexit 兜底） ═══")
             build_report(progress_file, report_file)
     except Exception:
-        pass  # 静默失败，不影响主流程
+        pass
 
 def main():
     atexit.register(_ensure_finish_on_exit)
@@ -1479,7 +1485,7 @@ def main():
   内层 (岗位级):
     --step read --index N          读第N条JD
     --step write-decision --decision APPROVE/REJECT [--reason "理由"]
-                                    AI 覆写 decision.json (open 'w' 直接覆盖, 无需删除)
+                                    AI 覆写 decision.json (原子写: 先写临时文件再整体替换, 中断不会留半截)
     --step decide --index N        执行AI决策+检查目标
 
   终止:
@@ -1491,20 +1497,20 @@ def main():
     python scripts/entitlement.py --status
     python scripts/cloud_client.py --sync
         """)
-    # ★ v5.8 启动自检：离线评测代码不得进入生产链路；规则真源必须可加载
+
     try:
         from scripts import selfcheck as _sc
         _sc.assert_clean()
     except Exception as _e:
         print(f"[自检] ⚠ {_e}")
 
-    # ★ 26.11.19 启动静默补同步：已激活用户每 24h 最多尝试一次。
-    #   只有「真的换到新版本」才出声；断网 / 云端未更新 / 校验不通过一律静默沿用本地，
-    #   不给买家制造无意义告警（授权状态里的 degraded 提示仍会兜底提醒）。
+
+
+
     try:
         _ar = cc.auto_sync_if_stale()
         if _ar.get("changed"):
-            print(f"[指令包] 云端已更新 {_ar['from']} → {_ar['to']}")
+            print(f"[适配数据] 云端已更新 {_ar['from']} → {_ar['to']}")
     except Exception:
         pass
 
@@ -1535,8 +1541,8 @@ def main():
                         help="人工确认风控页/限流已解除，清除停机标记（仅 --step init 生效）")
     args = parser.parse_args()
 
-    # ★ P0-1 停机闸门：停机后除 finish/status 外一律拒绝执行；
-    # 只有人工显式 --ack-risk 才放行，杜绝脚本自动重试风控账号
+
+
     if args.step not in ('finish', 'status'):
         if args.step == 'init' and args.ack_risk:
             ack_stop('--ack-risk 人工确认')
@@ -1544,7 +1550,7 @@ def main():
             sys.exit(2)
 
     if args.step == 'init':
-        # 门禁未放行必须以非零码退出，否则 Agent 会误判 init 成功继续往下跑
+
         if not step_init(args.city):
             sys.exit(1)
 

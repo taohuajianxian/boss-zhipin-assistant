@@ -1,28 +1,33 @@
 #!/usr/bin/env python3
-"""
-模块 H: AI关键词进化 + 搜索导航 (v5.0 NEW)
 
-★ 核心职责 — 流程图"AI评估当前页面投递结果，找出新的关键词"节点:
-  当一个页面（推荐页或搜索页）的岗位被穷尽后:
-  1. 读取本页面的投递结果（成功投递的岗位列表）
-  2. AI 分析成功投递的岗位标题/行业/公司，提取高频关键词
-  3. 结合 user_profile.json 的 search_keywords，生成新的搜索关键词
-  4. 从未尝试过的关键词中选取下一个
-  5. 导航到 BOSS直聘搜索结果页
 
-★ 关键词进化逻辑:
-  - 从成功投递的岗位中提取行业/职位关键词
-  - 排除已经搜索过的关键词（tried_keywords）
-  - 优先使用 user_profile.json 中预定义的 search_keywords
-  - 如果预定义关键词用完，AI 可以基于投递结果生成新关键词
-  - 新关键词写入 page_state.json 供跨进程使用
 
-独立可运行:
-    python keyword_evolver.py --action next-keyword
-    python keyword_evolver.py --action navigate --keyword "运营 北京"
-"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import json
+try:
+    from scripts.atomic_io import atomic_dump_json
+except ImportError:
+    from atomic_io import atomic_dump_json
+
 import os
 import sys
 import time
@@ -37,39 +42,39 @@ from scripts.webbridge_client import (
     ProgressManager,
 )
 
-# 文件路径
+
 PAGE_STATE_FILE = os.path.join(WORK_DIR, "page_state.json")
 USER_PROFILE_FILE = os.path.join(SKILL_DIR, "user_profile.json")
 PROGRESS_FILE = os.path.join(WORK_DIR, "stream_progress.json")
 
-# 搜索URL模板
+
 SEARCH_URL_TEMPLATE = "https://www.zhipin.com/web/geek/job?query={keyword}&city={city}"
 
 
-# ═══════════════════════════════════════════════════════════
-# 页面状态管理（跨进程持久化）
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def _default_page_state():
-    """默认页面状态"""
+
     return {
-        "page_type": "recommend",       # "recommend" | "search"
-        "current_keyword": "",           # 当前搜索关键词（search模式）
-        "tried_keywords": [],            # 已尝试过的搜索关键词
-        "pages_processed": 0,            # 已处理的页面数
-        "page_delivered_count": 0,       # 本页面投递成功数
-        "page_start_delivered": 0,       # 本页面开始时的累计投递数
-        "evolved_keywords": [],          # AI进化生成的新关键词
+        "page_type": "recommend",
+        "current_keyword": "",
+        "tried_keywords": [],
+        "pages_processed": 0,
+        "page_delivered_count": 0,
+        "page_start_delivered": 0,
+        "evolved_keywords": [],
     }
 
 
 def load_page_state():
-    """加载页面状态"""
+
     if os.path.exists(PAGE_STATE_FILE):
         try:
             with open(PAGE_STATE_FILE, 'r', encoding='utf-8') as f:
                 state = json.load(f)
-                # 合并默认值（防止旧文件缺字段）
+
                 default = _default_page_state()
                 default.update(state)
                 return default
@@ -79,48 +84,47 @@ def load_page_state():
 
 
 def save_page_state(state):
-    """保存页面状态"""
-    with open(PAGE_STATE_FILE, 'w', encoding='utf-8') as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+
+    atomic_dump_json(PAGE_STATE_FILE, state, indent=2)
 
 
 def reset_page_state():
-    """重置页面状态（新一轮开始时调用）"""
+
     state = _default_page_state()
     save_page_state(state)
     print("[页面状态] 已重置")
     return state
 
 
-# ═══════════════════════════════════════════════════════════
-# 关键词进化
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def evaluate_page_results():
-    """★ 流程图节点: AI评估当前页面投递结果，找出新的关键词
 
-    读取本页面投递成功的岗位，分析行业/标题分布，
-    输出评估结果供 AI 进一步生成新关键词。
 
-    返回:
-        dict: {
-            "page_delivered": int,        # 本页面投递成功数
-            "total_delivered": int,       # 累计投递成功数
-            "industry_distribution": dict, # 行业分布
-            "title_keywords": list,       # 高频标题关键词
-            "suggested_keywords": list,   # 建议的新搜索关键词
-        }
-    """
+
+
+
+
+
+
+
+
+
+
+
+
     state = load_page_state()
 
-    # 读取投递进度
+
     pm = ProgressManager(PROGRESS_FILE)
     pm.load()
 
     delivered = getattr(pm, 'delivered', [])
     total_delivered = len(delivered)
-    # ★ 统一口径（P1 修复）：累计成功数以统一台账 stats_core 为准，
-    #   旧逻辑只读 stream_progress.delivered 列表，evolve 因此报「累计投递 0 份」
+
+
     try:
         from scripts import stats_core as _sc
         _st = _sc.compute()
@@ -128,7 +132,7 @@ def evaluate_page_results():
     except Exception as _e:
         print(f"[进化] 警告: stats_core 不可用({_e})，回退 stream_progress 计数")
 
-    # 本页面的投递（从 page_start_delivered 到现在）
+
     page_start = state.get('page_start_delivered', 0)
     page_delivered_jobs = delivered[page_start:]
     page_delivered_count = len(page_delivered_jobs)
@@ -139,7 +143,7 @@ def evaluate_page_results():
     print(f"[进化] 本页面投递成功: {page_delivered_count} 份")
     print(f"[进化] 累计投递成功: {total_delivered} 份")
 
-    # 行业分布分析
+
     industry_dist = {}
     for job in page_delivered_jobs:
         industry = job.get('industry', '未知') or '未知'
@@ -149,24 +153,24 @@ def evaluate_page_results():
     for ind, count in sorted(industry_dist.items(), key=lambda x: -x[1]):
         print(f"  {ind}: {count}")
 
-    # 标题关键词提取（简单分词，找高频词）
+
     title_words = {}
     for job in page_delivered_jobs:
         title = job.get('title', '')
-        # 简单按常见分隔符分词
+
         import re
         words = re.findall(r'[\u4e00-\u9fff]+', title)
         for w in words:
             if len(w) >= 2:
                 title_words[w] = title_words.get(w, 0) + 1
 
-    # 取前10高频词
+
     top_keywords = sorted(title_words.items(), key=lambda x: -x[1])[:10]
     print(f"[进化] 高频标题词:")
     for word, count in top_keywords:
         print(f"  {word}: {count}")
 
-    # 加载用户画像中的预定义关键词
+
     user_profile = {}
     if os.path.exists(USER_PROFILE_FILE):
         with open(USER_PROFILE_FILE, 'r', encoding='utf-8') as f:
@@ -175,7 +179,7 @@ def evaluate_page_results():
     predefined_keywords = user_profile.get('search_keywords', [])
     tried_keywords = state.get('tried_keywords', [])
 
-    # 未尝试过的预定义关键词
+
     untried_predefined = [k for k in predefined_keywords if k not in tried_keywords]
 
     print(f"[进化] 预定义关键词: {len(predefined_keywords)} 个")
@@ -191,7 +195,7 @@ def evaluate_page_results():
         print(f"[进化] ★ AI需要基于投递结果生成新的搜索关键词")
         print(f"[进化] ★ 参考: 高频行业={list(industry_dist.keys())[:3]}, 高频标题词={[w[0] for w in top_keywords[:5]]}")
 
-    # 输出评估结果
+
     result = {
         "page_delivered": page_delivered_count,
         "total_delivered": total_delivered,
@@ -205,18 +209,18 @@ def evaluate_page_results():
 
 
 def get_next_keyword():
-    """获取下一个未尝试的搜索关键词
 
-    优先使用 user_profile.json 中的预定义关键词，
-    如果全部用完，返回 None（此时需要 AI 生成新关键词）。
 
-    返回:
-        str or None: 下一个搜索关键词，或 None（无可用关键词）
-    """
+
+
+
+
+
+
     state = load_page_state()
     tried = state.get('tried_keywords', [])
 
-    # 加载用户画像
+
     user_profile = {}
     if os.path.exists(USER_PROFILE_FILE):
         with open(USER_PROFILE_FILE, 'r', encoding='utf-8') as f:
@@ -225,7 +229,7 @@ def get_next_keyword():
     predefined = user_profile.get('search_keywords', [])
     evolved = state.get('evolved_keywords', [])
 
-    # 合并候选列表（预定义优先，然后是AI进化的）
+
     all_candidates = predefined + evolved
 
     for kw in all_candidates:
@@ -236,11 +240,11 @@ def get_next_keyword():
 
 
 def add_evolved_keyword(keyword):
-    """添加AI进化生成的新关键词
 
-    参数:
-        keyword: 新的搜索关键词
-    """
+
+
+
+
     state = load_page_state()
     if keyword not in state.get('evolved_keywords', []):
         state.setdefault('evolved_keywords', []).append(keyword)
@@ -249,11 +253,11 @@ def add_evolved_keyword(keyword):
 
 
 def mark_keyword_tried(keyword):
-    """标记关键词为已尝试
 
-    参数:
-        keyword: 已使用的搜索关键词
-    """
+
+
+
+
     state = load_page_state()
     if keyword not in state.get('tried_keywords', []):
         state.setdefault('tried_keywords', []).append(keyword)
@@ -263,25 +267,25 @@ def mark_keyword_tried(keyword):
     print(f"[进化] 关键词已标记为已尝试: {keyword}")
 
 
-# ═══════════════════════════════════════════════════════════
-# 搜索页导航
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def navigate_to_search(keyword, city_code=_PROFILE_CITY):
-    """★ 流程图节点: 以新关键词搜索岗位，定位到搜索结果页
 
-    导航到 BOSS直聘搜索结果页。
-    搜索页的卡片结构和推荐页一致，分批加载逻辑通用。
 
-    参数:
-        keyword: 搜索关键词（纯职位关键词，不含城市。城市已由 city_code 参数锁定）
-        city_code: 城市编码
 
-    返回:
-        (bool, str): (导航是否成功, 清洗后的关键词)
-    """
-    # ★ 关键词清洗：去除末尾的城市后缀
-    # 城市已在 URL 参数 city=xxx 中指定，关键词不应重复携带
+
+
+
+
+
+
+
+
+
+
+
     import re
     city_name = _PROFILE_CITY_NAME.strip()
     if city_name:
@@ -291,7 +295,7 @@ def navigate_to_search(keyword, city_code=_PROFILE_CITY):
         print("ERROR: WebBridge 不可达")
         return False, keyword
 
-    # URL编码关键词
+
     from urllib.parse import quote
     encoded_kw = quote(keyword)
     url = SEARCH_URL_TEMPLATE.format(keyword=encoded_kw, city=city_code)
@@ -299,14 +303,14 @@ def navigate_to_search(keyword, city_code=_PROFILE_CITY):
     print(f"[搜索] 导航到搜索结果页: {keyword}")
     print(f"[搜索] URL: {url}")
 
-    # 导航前先确保独立标签页（不抢用户当前页面）
+
     if not ensure_active_tab():
         print(f"[搜索] ERROR: 无法建立独立 BOSS 标签页")
         return False, keyword
 
     navigate(url, wait_range=(8, 10))
 
-    # 验证是否到达搜索页
+
     current_url = evaluate("window.location.href") or ""
     if "query=" not in current_url and "job" not in current_url:
         print(f"[搜索] 警告: 当前URL可能不在搜索页: {current_url}")
@@ -314,7 +318,7 @@ def navigate_to_search(keyword, city_code=_PROFILE_CITY):
 
     time.sleep(2)
 
-    # 检查是否有搜索结果
+
     result = evaluate("""
     (function(){
         var cards = document.querySelectorAll('.job-card-wrap');
@@ -336,7 +340,7 @@ def navigate_to_search(keyword, city_code=_PROFILE_CITY):
             return False, keyword
 
         print(f"[搜索] 搜索结果页已加载，初始卡片数: {card_count}")
-        # P1 统一口径：换页成功即刷新本页起点（否则 page_delivered 恒等于累计总数）
+
         try:
             from scripts import stats_core as _sc_nav
             _st_nav = load_page_state()
@@ -353,25 +357,25 @@ def navigate_to_search(keyword, city_code=_PROFILE_CITY):
 
 
 def start_new_page(keyword=None, city_code=_PROFILE_CITY):
-    """★ 开始处理新页面（推荐页或搜索页）
 
-    流程图"当前页面处理开始"节点:
-    - 第一次: 定位到职位推荐页
-    - 后续: 以新关键词搜索，定位到搜索结果页
 
-    参数:
-        keyword: 搜索关键词。None=推荐页，有值=搜索页
-        city_code: 城市编码
 
-    返回:
-        bool: 是否成功开始新页面
-    """
+
+
+
+
+
+
+
+
+
+
     state = load_page_state()
 
-    # 记录本页面开始时的累计投递数
+
     pm = ProgressManager(PROGRESS_FILE)
     pm.load()
-    # P1 统一口径：起点以 stats_core 累计成功数为准
+
     try:
         from scripts import stats_core as _sc_base
         _base0 = int(_sc_base.compute()['cumulative']['success'])
@@ -381,23 +385,23 @@ def start_new_page(keyword=None, city_code=_PROFILE_CITY):
     state['page_delivered_count'] = 0
 
     if keyword is None:
-        # 推荐页
+
         state['page_type'] = 'recommend'
         state['current_keyword'] = ''
         save_page_state(state)
 
         print("[页面] 开始处理推荐页")
         from scripts.recommend_loader import navigate_to_recommend, reset_state
-        reset_state()  # 重置分批状态
+        reset_state()
         return navigate_to_recommend(city_code)
     else:
-        # 搜索页
-        # ★ 先导航获取清洗后关键词，再标记
+
+
         ok, clean_kw = navigate_to_search(keyword, city_code)
         if ok:
             mark_keyword_tried(clean_kw)
         state = load_page_state()
-        # 导航后重新 load 会丢掉上面在旧 state 上的赋值，这里补回起点计数
+
         state['page_start_delivered'] = _base0
         state['page_delivered_count'] = 0
         state['pages_processed'] = state.get('pages_processed', 0) + 1
@@ -405,13 +409,13 @@ def start_new_page(keyword=None, city_code=_PROFILE_CITY):
 
         print(f"[页面] 开始处理搜索页 (关键词: {clean_kw})")
         from scripts.recommend_loader import reset_state
-        reset_state()  # 重置分批状态
+        reset_state()
         return ok
 
 
-# ═══════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def main():
     import argparse

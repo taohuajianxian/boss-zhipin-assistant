@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
-"""
-模块 G: 投递汇报 HTML 页生成
 
-职责:
-  读取 stream_progress.json 投递进度文件，
-  生成自包含的 HTML 汇报页（有本地二维码时内嵌 Base64，缺省只显示微信号，无外部依赖）。
 
-独立可运行:
-    python report_builder.py --progress stream_progress.json --output 投递汇总.html
-"""
+
+
+
+
+
+
+
+
 
 import base64
 import json
+try:
+    from scripts.atomic_io import atomic_write_text, atomic_dump_json
+except ImportError:
+    from atomic_io import atomic_write_text, atomic_dump_json
+
 import os
 import sys
 from datetime import datetime
 
-# SKILL 根目录（从自身路径推导：scripts/report_builder.py → 上级即 SKILL_DIR）
+
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS_DIR = os.path.join(SKILL_DIR, "assets")
 if SKILL_DIR not in sys.path:
@@ -24,7 +29,7 @@ if SKILL_DIR not in sys.path:
 
 
 def _entitlement_info():
-    """读取授权状态；独立跑 CLI 时也能用，失败则降级为不显示该区块。"""
+
     try:
         from scripts.entitlement import status_snapshot
         return status_snapshot()
@@ -33,7 +38,7 @@ def _entitlement_info():
 
 
 def _esc(text):
-    """HTML 转义"""
+
     if not text:
         return ""
     return (str(text)
@@ -44,11 +49,11 @@ def _esc(text):
 
 
 def _load_qr_base64(filename):
-    """从 assets 目录读取二维码图片，返回 data:image 格式的 base64 字符串。
 
-    二维码属于可选的本地资源，不随发布包分发，缺失属正常情况：
-    直接返回空字符串，由调用方降级为「只显示微信号」，不打印警告。
-    """
+
+
+
+
     filepath = os.path.join(ASSETS_DIR, filename)
     if not os.path.exists(filepath):
         return ""
@@ -64,13 +69,13 @@ def _load_qr_base64(filename):
 
 
 def _wechat_qr():
-    """返回微信二维码的 data URI。
 
-    取值顺序：
-      1. 本机 assets/wechat_qr.jpg（存在则用，方便随时换码）；
-      2. 随包的 scripts/qr_data.py 内嵌 base64（发布平台禁二进制，包里不带图片文件）。
-    都取不到时返回空字符串，页面降级为只显示微信号。
-    """
+
+
+
+
+
+
     local = _load_qr_base64("wechat_qr.jpg")
     if local:
         return local
@@ -88,19 +93,19 @@ def _wechat_qr():
 
 def build_report(progress_file="stream_progress.json", output_path="投递汇总.html",
                  entitlement_info=None):
-    """生成投递汇报 HTML 页
 
-    参数:
-        progress_file: 投递进度 JSON 文件路径
-        output_path: 输出 HTML 文件路径
-        entitlement_info: 授权状态 dict（由 serial_loop 传入，避免重复计算）；
-                          不传则本模块自行读取。
 
-    返回:
-        output_path (str) 或 None (失败时)
-    """
-    # ★ 统一统计口径：优先用 stats_core（serial_progress + stream_progress 按 jobId 去重）
-    #   保证 HTML 数字与 --step status 完全一致，杜绝"两套数字"
+
+
+
+
+
+
+
+
+
+
+
     delivered = failed = None
     _stats = None
     try:
@@ -110,7 +115,7 @@ def build_report(progress_file="stream_progress.json", output_path="投递汇总
         delivered = None
 
     if delivered is None:
-        # 兜底：仅读单一进度文件（旧行为）
+
         if not os.path.exists(progress_file):
             print(f"进度文件不存在: {progress_file}")
             return None
@@ -131,7 +136,7 @@ def build_report(progress_file="stream_progress.json", output_path="投递汇总
         session_note = (f"本次会话投递 {_s['success']} 份 · "
                         f"排除不匹配 {_s['rejected']} 份 · 累计去重 {_c['success']} 份")
 
-    # 按行业分组
+
     industry_groups = {}
     for job in delivered:
         industry = job.get('industry', '未知') or '未知'
@@ -241,7 +246,7 @@ tr:hover td {{ background: #fafafa; }}
                      f'<td><span class="tag fail">{_esc(job.get("reason",""))}</span></td></tr>\n')
         html += "    </tbody>\n  </table>\n  </div>\n"
 
-    # 授权状态（由 serial_loop 传入，或本模块自行读取）
+
     snap = entitlement_info if entitlement_info is not None else _entitlement_info()
     if snap:
         src_label = {"cloud": "云端同步版", "bundle": "随包基础版",
@@ -249,22 +254,22 @@ tr:hover td {{ background: #fafafa; }}
         html += f"""  <div class="section status-box">
     <h2>使用状态</h2>
     <div class="status-line"><span class="k">授权</span><span class="v">{_esc(snap.get('title'))}</span></div>
-    <div class="status-line"><span class="k">指令包</span><span class="v">{_esc(snap.get('plan_version') or '未加载')}（{src_label}）</span></div>
+    <div class="status-line"><span class="k">适配数据</span><span class="v">{_esc(snap.get('plan_version') or '未加载')}（{src_label}）</span></div>
     <div class="status-line"><span class="k">今天</span><span class="v">已投 {snap.get('free_used_today', 0)} / {snap.get('free_limit', 150)} 份</span></div>
     <div class="status-note">{_esc(snap.get('detail'))}</div>
   </div>
 """
 
-    # 只展示微信：本机有 assets 图则用图，否则用随包内嵌 base64（发布包不含图片文件）
+
     wechat_qr = _wechat_qr()
     wechat_id = _esc((snap or {}).get("wechat_id") or "")
 
     html += """  <div class="tip-section">
     <h2>继续用 / 续期</h2>
-    <p>加我微信拿激活码。页面改版后新版指令包我这边会一直同步；用着有问题也可以直接问我。</p>"""
+    <p>加我微信拿激活码。页面改版后新版适配数据我这边会一直同步；用着有问题也可以直接问我。</p>"""
 
-    # 二维码属于可选本地资源，不随包分发（发布平台禁止二进制文件）；
-    # 有本地图片时内嵌展示，没有时只展示微信号，保持页面干净。
+
+
     if wechat_qr:
         html += f"""    <div class="tip-codes">
       <div class="tip-code"><img src="{wechat_qr}" style="width:auto;height:auto;max-width:220px;max-height:300px;border-radius:8px;object-fit:contain;" alt="微信二维码"><div class="name">微信</div></div>
@@ -303,8 +308,7 @@ function copyActivate(){
 </body>
 </html>"""
 
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(html)
+    atomic_write_text(output_path, html)
 
     print(f"投递汇报已生成: {output_path}")
     print(f"  成功投递: {total_delivered} 份")

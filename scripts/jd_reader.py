@@ -1,32 +1,37 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-模块 E: 推荐页内原地点击卡片读右侧 JD
 
-知识/执行分离：
-  本文件**不再包含任何 BOSS直聘选择器字面量与内联 JS**。
-  所有选择器、JS 模板、点击时序均来自云端指令包 plan.json：
-      cloud_client.load_plan() → render_js(name, **选择器) → evaluate(js)
-  页面结构一变，新版指令包会自动下发，用户端不用换包、不用改代码。
 
-  指令包来源：激活后 ~/.boss_zhipin_deliver/plan.json；
-  未激活 / 离线时回退到随包附带的 <SKILL_DIR>/dist/plan.json（免费体验版）。
 
-核心流程（编排逻辑留本地）：
-  1. 在左侧列表中按 jobId 找到目标卡片
-  2. 滚动到可视区域
-  3. 原生 click 选中该卡 → 右侧面板就地切换出 JD
-  4. 校验右侧面板确实切到了目标岗位
-  5. 读取右侧 JD 全文
 
-独立可运行:
-    python jd_reader.py <jobId> --output jd_<jobId>.json
 
-也可被其他模块 import:
-    from scripts.jd_reader import click_card_inplace, read_jd_from_panel
-"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import json
+try:
+    from scripts.atomic_io import atomic_dump_json
+except ImportError:
+    from atomic_io import atomic_dump_json
+
 import time
 import sys
 import os
@@ -39,22 +44,22 @@ from scripts.webbridge_client import evaluate, decrypt_salary
 from scripts.stop_codes import risk_scan
 
 
-# ═══════════════════════════════════════════════════════════
-# 云端指令包 → JS
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def _plan_or_raise():
     plan, source, _ = cc.load_plan()
     if plan is None:
         raise RuntimeError(
-            "指令包不可用：既没有云端缓存，也找不到 dist/plan.json。"
-            "请确认技能包完整，或执行 python scripts/cloud_client.py --sync"
+            "适配数据不可用：本机还没有同步下来的适配数据缓存。"
+            "请联网执行 python scripts/cloud_client.py --sync 同步一次"
         )
     return plan, source
 
 
 def _js_vars(plan, **extra):
-    """把云端选择器摊平成 render_js 需要的 __XXX__ 变量。"""
+
     sel = cc.selectors(plan=plan)
     detail = sel.get("detail", {})
     listing = sel.get("list", {})
@@ -78,7 +83,7 @@ def _js_vars(plan, **extra):
     variables.update(extra)
     missing = [k for k, v in variables.items() if v is None or v == ""]
     if missing:
-        raise RuntimeError(f"指令包缺少必要字段: {', '.join(missing)}")
+        raise RuntimeError(f"适配数据缺少必要字段: {', '.join(missing)}")
     return variables
 
 
@@ -86,18 +91,18 @@ def _js(name, plan, **extra):
     return cc.render_js(name, plan=plan, **_js_vars(plan, **extra))
 
 
-# ═══════════════════════════════════════════════════════════
-# 卡片定位与点击
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def click_card_inplace(job_id, verify=True, max_wait=5):
-    """在推荐页左侧列表中原地点击指定岗位卡片。
 
-    返回: {"ok": bool, "detail": str, "title": str}
-    """
+
+
+
     plan, _ = _plan_or_raise()
 
-    # 1. 定位卡片并滚动到可视区域
+
     find_raw = evaluate(_js("find_card", plan, JID=job_id)) or "{}"
     try:
         find_result = json.loads(find_raw)
@@ -110,20 +115,20 @@ def click_card_inplace(job_id, verify=True, max_wait=5):
                 "title": ""}
     title = find_result.get("title", "")
 
-    # 2. 等待滚动完成
+
     time.sleep(1.5)
 
-    # 3. 原生点击该卡片
+
     click_result = evaluate(_js("click_card", plan, JID=job_id)) or "not_found"
     if click_result == "not_found":
         return {"ok": False, "detail": "点击时未找到卡片", "title": title}
     if click_result == "no_card_container":
         return {"ok": False, "detail": "找到链接但未找到卡片容器", "title": title}
 
-    # 4. 等待右侧面板更新
+
     time.sleep(2)
 
-    # 5. 校验右侧面板确实切到了目标岗位
+
     if verify:
         checked = _verify_panel(job_id, max_wait, plan=plan)
         if not checked["ok"]:
@@ -135,7 +140,7 @@ def click_card_inplace(job_id, verify=True, max_wait=5):
 
 
 def _verify_panel(job_id, max_wait=5, plan=None):
-    """校验右侧面板确实切换到了目标岗位。返回 {"ok": bool, "detail": str}"""
+
     if plan is None:
         plan, _ = _plan_or_raise()
     script = _js("verify_panel", plan, JID=job_id)
@@ -154,9 +159,9 @@ def _verify_panel(job_id, max_wait=5, plan=None):
     return {"ok": False, "detail": f"等待{max_wait}s未校验到目标岗位"}
 
 
-# ═══════════════════════════════════════════════════════════
-# JD 内容读取
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 EMPTY_JD = {
     "jd_text": "", "job_title": "", "company": "", "salary": "",
@@ -166,7 +171,7 @@ EMPTY_JD = {
 
 
 def read_jd_from_panel():
-    """从右侧面板读取 JD 全文。字段结构与 v5 完全一致，便于上层无感升级。"""
+
     plan, _ = _plan_or_raise()
     raw = evaluate(_js("read_jd", plan)) or "{}"
     try:
@@ -180,9 +185,9 @@ def read_jd_from_panel():
 
 
 def _risk_of_jd(jd):
-    """P0-1：JD 页面文本风控扫描
-    返回 (hit, detail)；强字样（访问受限/验证码/人机验证…）即视为风控拦截。
-    """
+
+
+
     text = " ".join(str(jd.get(k) or "") for k in
                     ("full_text", "jd_text", "job_title", "company"))
     level, pattern = risk_scan(text)
@@ -193,7 +198,7 @@ def _risk_of_jd(jd):
     return False, ""
 
 def read_jd_for_job(job_id):
-    """完整流程: 点击卡片 → 读 JD。返回 {"ok", "detail", "job_id", "jd"}"""
+
     click_result = click_card_inplace(job_id)
     if not click_result["ok"]:
         return {"ok": False, "detail": click_result["detail"],
@@ -215,9 +220,9 @@ def read_jd_for_job(job_id):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="推荐页内原地点击卡片读 JD")
-    parser.add_argument("jobId", help="加密岗位 ID")
+    parser.add_argument("jobId", help="岗位 ID")
     parser.add_argument("--output", help="输出 JSON 文件路径 (可选)")
-    parser.add_argument("--plan-status", action="store_true", help="只显示当前指令包来源")
+    parser.add_argument("--plan-status", action="store_true", help="只显示当前适配数据来源")
     args = parser.parse_args()
 
     if args.plan_status:
@@ -234,15 +239,14 @@ def main():
         print("[风控] 请人工到浏览器确认账号状态并完成验证，再执行 "
               "python serial_loop.py --step init --ack-risk")
         if args.output:
-            with open(args.output, "w", encoding="utf-8") as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
+            atomic_dump_json(args.output, result, indent=2)
             print(f"[风控] 现场已保存至 {args.output}")
         sys.exit(3)
     if result["ok"]:
         jd = result["jd"]
         print(f"岗位: {jd.get('job_title', '?')}")
         print(f"公司: {jd.get('company', '?')}")
-        print(f"薪资: {jd.get('salary', '?')} (解密: {jd.get('salary_decrypted', '?')})")
+        print(f"薪资: {jd.get('salary_decrypted') or jd.get('salary', '?')}")
         print(f"城市: {jd.get('city', '?')}")
         print(f"经验: {jd.get('experience', '?')}")
         print(f"学历: {jd.get('degree', '?')}")
@@ -250,8 +254,7 @@ def main():
         print(f"\nJD 正文 ({len(jd.get('jd_text', ''))} 字):")
         print(jd.get('jd_text', '(空)')[:500])
         if args.output:
-            with open(args.output, 'w', encoding='utf-8') as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
+            atomic_dump_json(args.output, result, indent=2)
             print(f"\n已保存至 {args.output}")
     else:
         print(f"失败: {result['detail']}")

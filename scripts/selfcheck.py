@@ -1,24 +1,24 @@
 # -*- coding: utf-8 -*-
-"""生产链路启动自检（v5.8）。
 
-解决的问题
-----------
-v5.7 的坑：线上"语义判定"实际跑的是关键词脚本，但表面上一切正常，没人发现，
-直到买家质问。根因是**没有运行时自检**——代码被替换/退回旧逻辑，没有任何机制报警。
 
-本模块在 serial_loop 启动时跑一遍，三项硬检查：
-1. 离线评测代码（eval/ 下 judge_baseline、replay）不得被生产链路 import；
-2. scripts/ 源码不得出现 "import judge_baseline" / "from eval" 之类的引用；
-3. 规则真源 rules.json 必须可加载，版本号非空。
 
-一旦命中 1/2/3 中任一项，直接 SystemExit——宁可停下报错，也不带着假语义层继续投递。
-其他给出警告（缺 rules.json 时回退内置常量、提示词版本缺失等），不阻断。
 
-用法：
-    python scripts/selfcheck.py          # 人工体检
-    from scripts import selfcheck
-    selfcheck.assert_clean()             # 生产入口调用
-"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import os
 import re
@@ -107,7 +107,7 @@ def run(verbose=True):
 
 
 def assert_clean():
-    """生产入口调用：critical 直接终止进程，warnings 仅打印。"""
+
     res = run(verbose=True)
     if res["critical"]:
         print("[自检] ✗ 致命问题，已中止：")

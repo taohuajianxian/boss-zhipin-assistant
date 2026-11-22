@@ -1,29 +1,29 @@
 #!/usr/bin/env python3
-"""
-模块 A: 环境自检与修复 (v2 — 增加账户匹配引导)
 
-★ v2 新增:
-  - check_account_match() — 检测本地用户信息与登录账户是否匹配
-  - print_account_guidance() — 账户不匹配时的引导流程
-  - 集成到 check_environment() 和 main() 中
 
-职责:
-  1. 检查 WebBridge daemon 是否可达 (端口 10086)
-  2. 检查 Chrome 标签页是否可交互
-  3. 检查 BOSS直聘 登录状态
-  4. ★ 检查本地用户信息与登录账户是否匹配（用户名 + 城市）
-  5. 自动修复: 清理 PID 残留 → 重试
-  6. 修复失败则输出修复指引
 
-独立可运行:
-    python env_check.py
 
-也可被其他模块 import:
-    from scripts.env_check import check_environment, auto_repair, check_account_match
-    ok, issues = check_environment()
-    if not ok:
-        auto_repair()
-"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import sys
 import os
@@ -42,17 +42,17 @@ from scripts.profile_loader import (
 )
 
 
-# ═══════════════════════════════════════════════════════════
-# 基础环境检查
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def check_webbridge():
-    """检查 WebBridge daemon 是否可达"""
+
     return health_check()
 
 
 def check_chrome_tab():
-    """检查 Chrome 标签页是否可交互"""
+
     try:
         result = evaluate("1+1")
         return str(result) == "2"
@@ -61,7 +61,7 @@ def check_chrome_tab():
 
 
 def check_boss_login():
-    """检查 BOSS直聘 登录状态"""
+
     try:
         current_url = evaluate("window.location.href") or ""
         if "zhipin.com" not in current_url:
@@ -89,18 +89,18 @@ def check_boss_login():
         return f"error:{e}"
 
 
-# ═══════════════════════════════════════════════════════════
-# ★ v2 新增: 账户匹配检查
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def _get_logged_in_user_name():
-    """从 BOSS直聘 页面提取已登录用户的显示名
 
-    尝试多个 DOM 选择器，返回非空的用户名文本。
 
-    返回:
-        str: 登录用户名（可能为空字符串）
-    """
+
+
+
+
+
     result = evaluate("""
     (function(){
         // ★ 必须用精确选择器 .nav-figure .label-text 避免被岗位列表中的 .user-info 误匹配
@@ -143,16 +143,16 @@ def _get_logged_in_user_name():
 
 
 def _get_logged_in_city():
-    """从 BOSS直聘 页面提取当前选择的城市
 
-    从 URL 参数或页面城市选择器中提取城市信息。
 
-    返回:
-        dict: {
-            "city_code": str,   # URL 中的城市编码（如 "101210100"）
-            "city_name": str,   # 页面上显示的城市名（如 "北京"）
-        }
-    """
+
+
+
+
+
+
+
+
     result = evaluate("""
     (function(){
         // 方式1: 从 URL 提取城市编码
@@ -196,46 +196,46 @@ def _get_logged_in_city():
 
 
 def check_account_match():
-    """★ 检查本地用户信息是否与登录账户匹配
 
-    读取 user_profile.json 中的 user_name 和 target_city/city_code，
-    与当前登录的 BOSS直聘 账户信息进行比对。
 
-    检查项:
-      1. 用户名匹配: 本地 user_profile.json 的 user_name 是否出现在登录账户名中
-      2. 城市匹配: URL 中的 city 参数是否与 user_profile.json 的 city_code 一致
 
-    返回:
-        dict: {
-            "matched": bool,           # 是否完全匹配
-            "user_name_match": bool,   # 用户名是否匹配
-            "city_match": bool,        # 城市是否匹配
-            "logged_in_name": str,     # 登录账户名
-            "expected_name": str,      # 本地配置的用户名
-            "logged_in_city_code": str,# 登录页面的城市编码
-            "logged_in_city_name": str,# 登录页面的城市名
-            "expected_city": str,      # 本地配置的目标城市
-            "expected_city_code": str, # 本地配置的城市编码
-            "issues": list[str],       # 不匹配的问题列表
-        }
-    """
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     issues = []
 
-    # 1. 读取本地用户配置
+
     expected_name = USER_NAME
     expected_city = TARGET_CITY
     expected_city_code = str(CITY_CODE)
 
-    # 2. 获取登录账户信息
+
     logged_in_name = _get_logged_in_user_name()
     city_info = _get_logged_in_city()
     logged_in_city_code = city_info["city_code"]
     logged_in_city_name = city_info["city_name"]
 
-    # 3. 用户名匹配检查
+
     user_name_match = True
     if expected_name and logged_in_name:
-        # 模糊匹配: 本地用户名出现在登录名中，或登录名出现在本地用户名中
+
         if expected_name in logged_in_name or logged_in_name in expected_name:
             user_name_match = True
         else:
@@ -245,11 +245,11 @@ def check_account_match():
                 f"登录账户 '{logged_in_name}'"
             )
     elif expected_name and not logged_in_name:
-        # 无法获取登录用户名，不算不匹配，但提示
-        issues.append(f"无法从页面获取登录用户名（本地配置: '{expected_name}'）")
-    # 如果本地没配 user_name，跳过此检查
 
-    # 4. 城市匹配检查
+        issues.append(f"无法从页面获取登录用户名（本地配置: '{expected_name}'）")
+
+
+
     city_match = True
     if logged_in_city_code and expected_city_code:
         if logged_in_city_code != expected_city_code:
@@ -260,10 +260,10 @@ def check_account_match():
                 f"页面当前 '{city_display}'({logged_in_city_code})"
             )
     elif not logged_in_city_code:
-        # URL 中无城市参数（可能在首页），跳过此检查
+
         pass
 
-    # 5. 综合判断
+
     matched = user_name_match and city_match
 
     return {
@@ -281,16 +281,16 @@ def check_account_match():
 
 
 def print_account_guidance(match_result):
-    """输出账户不匹配的引导信息
 
-    参数:
-        match_result: check_account_match() 的返回值
-    """
+
+
+
+
     print("\n" + "=" * 60)
     print("★ 账户匹配检查")
     print("=" * 60)
 
-    # user_name 为空时（模板未填写）不能报"匹配"，否则首用用户会被误导
+
     prof_unset = not str(match_result['expected_name'] or '').strip()
     name_show = match_result['expected_name'] or '(未填写)'
     if match_result['expected_city']:
@@ -346,16 +346,16 @@ def print_account_guidance(match_result):
     print("\n" + "=" * 60)
 
 
-# ═══════════════════════════════════════════════════════════
-# 完整环境检查
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def check_environment():
-    """完整环境检查
 
-    返回:
-        (ok: bool, issues: list[str])
-    """
+
+
+
+
     issues = []
 
     if not check_webbridge():
@@ -377,7 +377,7 @@ def check_environment():
         issues.append("登录状态未知 (页面可能未完全渲染)")
         return False, issues
 
-    # ★ v2 新增: 账户匹配检查（登录成功后才检查）
+
     match_result = check_account_match()
     if not match_result["matched"]:
         for issue in match_result["issues"]:
@@ -387,11 +387,11 @@ def check_environment():
 
 
 def auto_repair():
-    """自动修复: 清理 PID → 等待 → 重试
 
-    返回:
-        repaired: bool
-    """
+
+
+
+
     print("[修复] 清理 PID 残留文件...")
     cleaned = clean_pid_files()
     if cleaned:
@@ -413,7 +413,7 @@ def auto_repair():
 
 
 def print_repair_guidance(issues):
-    """输出修复指引"""
+
     print("\n" + "=" * 60)
     print("环境检查未通过，请按以下步骤修复:")
     print("=" * 60)
@@ -452,7 +452,7 @@ def print_repair_guidance(issues):
 
 
 def main():
-    """CLI 入口: 环境自检（含账户匹配）"""
+
     print("=" * 60)
     print("环境自检 (模块 A v2 — 含账户匹配)")
     print("=" * 60)
@@ -464,7 +464,7 @@ def main():
         for issue in issues:
             print(f"  - {issue}")
 
-        # 区分基础环境问题和账户匹配问题
+
         basic_issues = [i for i in issues if "不匹配" not in i and "无法" not in i]
         account_issues = [i for i in issues if "不匹配" in i or "无法" in i]
 
@@ -473,18 +473,18 @@ def main():
             if auto_repair():
                 print("\n自动修复成功! 重新检查...")
                 ok, issues = check_environment()
-                # 重新分类
+
                 account_issues = [i for i in issues if "不匹配" in i or "无法" in i]
 
-    # 即使基础环境OK，也显示账户匹配结果
+
     print("\n" + "=" * 60)
     if ok:
         print("环境检查通过，可以开始投递")
-        # 显示账户匹配详情
+
         match_result = check_account_match()
         print_account_guidance(match_result)
     else:
-        # 分开显示基础环境问题和账户匹配问题
+
         basic_issues = [i for i in issues if "不匹配" not in i and "无法" not in i]
         account_issues = [i for i in issues if "不匹配" in i or "无法" in i]
 
@@ -492,14 +492,14 @@ def main():
             print("环境检查未通过")
             print_repair_guidance(basic_issues)
         elif account_issues:
-            # 基础环境OK，但有账户匹配问题
+
             print("基础环境检查通过，但检测到账户匹配问题:")
             match_result = check_account_match()
             print_account_guidance(match_result)
             print("\n★ 账户不匹配不阻止投递，但建议先修复以确保投递到正确的城市。")
             print("  确认无误后可回复 '继续投递'")
 
-    # 退出码: 基础环境问题=1，仅账户匹配问题=0
+
     has_basic_issues = any("不匹配" not in i and "无法" not in i for i in issues)
     if has_basic_issues:
         sys.exit(1)

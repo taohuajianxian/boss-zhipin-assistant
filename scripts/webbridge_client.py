@@ -1,26 +1,31 @@
-﻿#!/usr/bin/env python3
-"""
-WebBridge HTTP 客户端 v3 — 共享模块
+#!/usr/bin/env python3
 
-所有 BOSS 脚本通过此模块与 Kimi WebBridge 通信。
-提供 decrypt_salary、extract_jobs、handle_popup 等 Boss直聘专用工具函数。
 
-核心设计:
-  - 全局单一 SESSION，所有脚本复用同一个标签页
-  - api() 自带 3 次重试
-  - extract_jobs() 内置 Vue $props.data 提取
-  - handle_popup() 处理"好"/"确定"弹窗（含第120份投递弹窗）
-  - ProgressManager 管理断点续传
 
-用法:
-    from scripts.webbridge_client import (
-        api, evaluate, navigate, extract_jobs,
-        decrypt_salary, parse_salary_max, handle_popup,
-        scroll_page, ProgressManager, SESSION
-    )
-"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import json
+try:
+    from scripts.atomic_io import atomic_dump_json
+except ImportError:
+    from atomic_io import atomic_dump_json
+
 import http.client
 import time
 import re
@@ -32,9 +37,9 @@ import glob
 import sys
 from datetime import datetime
 
-# ═══════════════════════════════════════════════════════════
-# 路径设置 + 用户配置（从 profile_loader 读取，禁止硬编码）
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if SKILL_DIR not in sys.path:
@@ -42,27 +47,27 @@ if SKILL_DIR not in sys.path:
 
 from scripts.profile_loader import SESSION_NAME, USER_NAME
 
-# ═══════════════════════════════════════════════════════════
-# 常量
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 10086
 
-# ★ 全局唯一 SESSION — 从 user_profile.json 读取
-#   禁止在各脚本中自定义 SESSION 名
+
+
 SESSION = SESSION_NAME
 
 DEFAULT_TIMEOUT = 60
 MAX_RETRIES = 3
 RETRY_DELAY = 3
 
-# ═══════════════════════════════════════════════════════════
-# Boss直聘薪资字体解密
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def decrypt_salary(text):
-    """解密 Boss直聘薪资字体加密（U+E031~U+E03A → 数字 0~9）"""
+
     if not text:
         return ""
     result = []
@@ -76,10 +81,10 @@ def decrypt_salary(text):
 
 
 def parse_salary_max(s):
-    """解析薪资字符串，返回最高薪资（K为单位）
 
-    例: "12-20K" → 20, "5-7K·14薪" → 5, "4000-6000元/月" → 6
-    """
+
+
+
     if not s:
         return 0
     s = re.sub(r'·\d+薪', '', s)
@@ -93,12 +98,12 @@ def parse_salary_max(s):
 
 
 def parse_salary_min(s):
-    """解析薪资字符串，返回区间下界（K为单位）
 
-    薪资口径：「下限≥阈值」，不用上限放行。
-    例: "12-20K" → 12, "5-8K·14薪" → 5, "4000-6000元/月" → 4, "8K以上" → 8
-    无法解析（如"面议"）返回 0，调用方需自行兜底。
-    """
+
+
+
+
+
     if not s:
         return 0
     s = re.sub(r'·\d+薪', '', s)
@@ -111,21 +116,21 @@ def parse_salary_min(s):
     m = re.search(r'(\d+)-(\d+)万/月', s)
     if m:
         return int(m.group(1)) * 10
-    m = re.search(r'(\d+)\s*K', s)          # 单值形态: "8K" / "8K以上"
+    m = re.search(r'(\d+)\s*K', s)
     if m:
         return int(m.group(1))
-    m = re.search(r'(\d+)\s*元/月', s)      # 单值形态: "8000元/月"
+    m = re.search(r'(\d+)\s*元/月', s)
     if m:
         return int(m.group(1)) / 1000
     return 0
 
 
-# ═══════════════════════════════════════════════════════════
-# 模块级 API 函数（自带重试）
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def api(action, args=None, session=SESSION, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=DEFAULT_TIMEOUT):
-    """发送 WebBridge API 请求，返回解析后的 dict。自带 MAX_RETRIES 次重试。"""
+
     if args is None:
         args = {}
     last_error = None
@@ -146,17 +151,17 @@ def api(action, args=None, session=SESSION, host=DEFAULT_HOST, port=DEFAULT_PORT
 
 
 def evaluate(code, session=SESSION):
-    """执行 JS 并返回字符串结果"""
+
     r = api("evaluate", {"code": code}, session=session)
     return r.get("data", {}).get("value", "")
 
 
 def navigate(url, wait_range=(4, 6), session=SESSION, new_tab=False, group_title=None):
-    """导航到 URL 并等待 SPA 渲染
 
-    new_tab=True 时在独立新标签页打开
-    （不抢占用户当前页面），group_title 用于设置标签组显示名。
-    """
+
+
+
+
     args = {"url": url}
     if new_tab:
         args["newTab"] = True
@@ -168,18 +173,18 @@ def navigate(url, wait_range=(4, 6), session=SESSION, new_tab=False, group_title
 
 
 def click(selector, session=SESSION):
-    """通过 CSS 选择器点击元素"""
+
     return api("click", {"selector": selector}, session=session).get("data", {}).get("success", False)
 
 
 def scroll_page(session=SESSION):
-    """滚动到页面底部，触发懒加载"""
+
     evaluate("(function(){window.scrollTo(0, document.body.scrollHeight);return document.body.scrollHeight;})()", session=session)
 
 
-# ═══════════════════════════════════════════════════════════
-# Boss直聘 专用工具函数
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 _EXTRACT_JOBS_JS = r"""
 (function(){
@@ -215,7 +220,7 @@ _EXTRACT_JOBS_JS = r"""
 
 
 def extract_jobs(session=SESSION):
-    """从当前页面提取所有岗位卡片（Vue $props.data 方式）。薪资已解密。"""
+
     raw = evaluate(_EXTRACT_JOBS_JS, session=session)
     try:
         data = json.loads(raw) if raw else {}
@@ -228,7 +233,7 @@ def extract_jobs(session=SESSION):
 
 
 _POPUP_SELECTORS = [
-    # 确认按钮（精确到弹窗内，优先命中）
+
     '.dialog-wrap.greet-pop .btn-sure',
     '.greet-pop .btn',
     '.dialog-container .btn',
@@ -239,17 +244,17 @@ _POPUP_SELECTORS = [
     '.btn-sure',
     '.dialog-confirm', '.layer-btn-confirm', '.btn-confirm',
     '.dialog-ok', '.modal-confirm', '.layui-layer-btn0',
-    # 容器：弹窗叠加时只认按钮会漏层，容器由 JS 下沉取其内部按钮
+
     '.dialog-wrap', '.dialog-container', '.greet-pop',
     '.tips-pop', '.boss-tip', '.boss-popup',
     '.modal-wrap', '.layer-layer',
 ]
 
-# 无按钮语义时的文本兜底（BOSS 弹窗按钮文案）
+
 _POPUP_TEXTS = ['好', '确定', '我知道了', '知道了', '继续沟通', '关闭', '明白了', '下次再说']
 _POPUP_MAX_ROUNDS = 4
 
-# 可见遮罩/弹窗节点计数（零副作用、无 sleep），供 preflight 与关后复查复用
+
 _RESIDUE_JS = """
 (function(){
     var sels = %s;
@@ -268,11 +273,11 @@ _RESIDUE_JS = """
 
 
 def popup_residue(session=SESSION):
-    """当前可见的遮罩/弹窗节点数（0 = 页面干净，可安全点击）
 
-    20261113 新增：独立零延时探测。投递前先用它判断是否需要清障，
-    避免每条岗位都付出 handle_popup 固定的 1.5s 等待。
-    """
+
+
+
+
     try:
         raw = evaluate(_RESIDUE_JS, session=session)
     except Exception:
@@ -284,14 +289,14 @@ def popup_residue(session=SESSION):
 
 
 def handle_popup(session=SESSION, max_rounds=_POPUP_MAX_ROUNDS, skip_if_clean=False):
-    """检测并关闭弹窗（支持叠加多层遮罩）
 
-    20261113 修复：原实现命中第一个按钮即 return，只关一层。
-    BOSS 连续触发时会叠 2~6 层遮罩，残余遮罩挡住后续岗位卡片点击，
-    造成大量"假失败"与 comm_limit 误判。现改为多轮循环，直到扫不到可点按钮。
 
-    skip_if_clean=True: 先零延时探测遮罩，页面干净则立即返回 'no_popup'（不 sleep）。
-    """
+
+
+
+
+
+
     if skip_if_clean and popup_residue(session=session) == 0:
         return 'no_popup'
 
@@ -408,7 +413,7 @@ def handle_popup(session=SESSION, max_rounds=_POPUP_MAX_ROUNDS, skip_if_clean=Fa
     if not total:
         return 'no_popup'
 
-    # 关完后复查遮罩是否清零，残留量写进返回值，便于上层判断是否仍被遮挡
+
     residue = popup_residue(session=session)
 
     summary = 'clicked: %d (%d轮) [%s]' % (total, rounds, '|'.join(hits))
@@ -417,21 +422,21 @@ def handle_popup(session=SESSION, max_rounds=_POPUP_MAX_ROUNDS, skip_if_clean=Fa
     return summary
 
 
-# ═══════════════════════════════════════════════════════════
-# 进度管理（断点续传）
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 class ProgressManager:
-    """投递进度管理器 — 支持断点续传
 
-    用法:
-        pm = ProgressManager()
-        pm.load()
-        if pm.is_done(job_id):
-            continue
-        pm.add_delivered(job_id, job)
-        pm.save()
-    """
+
+
+
+
+
+
+
+
+
 
     def __init__(self, filepath="stream_progress.json"):
         self.filepath = filepath
@@ -444,8 +449,7 @@ class ProgressManager:
         return self
 
     def save(self):
-        with open(self.filepath, 'w', encoding='utf-8') as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
+        atomic_dump_json(self.filepath, self.data, indent=2)
 
     @property
     def delivered_ids(self):
@@ -490,12 +494,12 @@ class ProgressManager:
         return len(self.data.get('failed', []))
 
 
-# ═══════════════════════════════════════════════════════════
-# 健康检查与 Daemon 管理
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 def health_check(host=DEFAULT_HOST, port=DEFAULT_PORT):
-    """快速检查 WebBridge daemon 是否可达"""
+
     try:
         conn = http.client.HTTPConnection(host, port, timeout=5)
         conn.request("GET", "/")
@@ -507,34 +511,34 @@ def health_check(host=DEFAULT_HOST, port=DEFAULT_PORT):
 
 
 def ensure_active_tab(session=SESSION, timeout_wait=10):
-    """确保 session 有独立活跃的 BOSS 标签页（不抢占用户页面）
 
-    会话绑定：切标签不会落到用户页面。
-    原则: 只在本 session 自己打开的标签页中定位 BOSS 标签页，
-    绝不借用户当前查看的页面（find_tab 不传 active=True）。
-    """
+
+
+
+
+
     try:
         if not health_check():
             return False
 
-        # 1. 查看本 session 已打开的标签页
+
         r = api("list_tabs", {}, session=session, timeout=5)
         if r.get("ok"):
             tabs_data = r.get("data", {})
             tabs = tabs_data.get("tabs", []) if isinstance(tabs_data, dict) else tabs_data
             if tabs:
-                # 只定位本 session 自己打开的 BOSS 标签页（URL 含 zhipin.com）
+
                 for t in tabs:
                     url = (t.get("url") or "") if isinstance(t, dict) else ""
                     if "zhipin.com" in url:
-                        # find_tab 不带 active → 只在本 session 自己的标签中查找，不借用户页面
+
                         fr = api("find_tab", {"url": url}, session=session, timeout=5)
                         if fr.get("ok"):
                             if str(evaluate("1+1", session=session)) == "2":
                                 return True
-                # session 有标签但无 BOSS 标签页 → 不使用它们，新建独立标签页
 
-        # 2. 无可用 BOSS 标签页 → 新建独立标签页（newTab=True，独立标签组）
+
+
         nav_r = navigate("https://www.zhipin.com/web/geek/job",
                          wait_range=(timeout_wait, timeout_wait + 2),
                          session=session, new_tab=True, group_title="BOSS直聘投递")
@@ -546,11 +550,11 @@ def ensure_active_tab(session=SESSION, timeout_wait=10):
 
 
 def clean_pid_files():
-    """清理 WebBridge PID 残留文件"""
+
     pid_patterns = [
         os.path.expanduser("~/.kimi-webbridge/daemon.pid"),
         os.path.expanduser("~/.kimi-webbridge*.pid"),
-        # (removed: trae-cn pattern, not applicable in Marvis)
+
     ]
     cleaned = []
     for pattern in pid_patterns:
@@ -564,9 +568,9 @@ def clean_pid_files():
     return cleaned
 
 
-# ═══════════════════════════════════════════════════════════
-# 信号安全中断
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 class SafeInterrupt(BaseException):
     pass
@@ -580,18 +584,18 @@ def register_signal_guard():
     signal.signal(signal.SIGTERM, _signal_handler)
 
 
-# ═══════════════════════════════════════════════════════════
-# WebBridge 类
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 class WebBridge:
-    """Kimi WebBridge 通信封装
 
-    用法:
-        wb = WebBridge()
-        wb.navigate(url)
-        jobs = wb.extract_jobs()
-    """
+
+
+
+
+
+
 
     def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT, session=SESSION, timeout=DEFAULT_TIMEOUT):
         self.host = host
@@ -673,9 +677,9 @@ class WebBridge:
         return None
 
 
-# ═══════════════════════════════════════════════════════════
-# 版本信息
-# ═══════════════════════════════════════════════════════════
+
+
+
 
 __version__ = "3.0.0"
 __updated__ = "2026-07-26"
