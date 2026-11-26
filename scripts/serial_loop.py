@@ -62,6 +62,7 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SKILL_DIR)
 
 from scripts.profile_loader import WORK_DIR, CITY_CODE as _PROFILE_CITY
+from scripts import run_lock
 from scripts import entitlement as ent
 from scripts import cloud_client as cc
 from scripts import job_filter
@@ -79,8 +80,12 @@ PAGE_WINDOW = os.path.join(WORK_DIR, "page_window.json")
 
 from scripts.webbridge_client import (
     SESSION, evaluate, health_check, ensure_active_tab,
+    ensure_active_tab_ex, get_target_tab, set_target_tab, current_url,
     handle_popup, popup_residue,
     ProgressManager,
+    is_terminal_fail_text,
+    TERMINAL_FAIL_PATTERNS as _TERMINAL_FAIL_PATTERNS,
+    TRANSIENT_FAIL_HINTS as _TRANSIENT_FAIL_HINTS,
 )
 from scripts.jd_reader import read_jd_for_job
 from scripts.deliver_engine import (deliver_inplace, check_delivery_target, DAILY_TARGET,
@@ -162,7 +167,23 @@ def load_serial_progress():
 _DELIVERED_IDS_CACHE = None
 
 
+
+
+
+TERMINAL_FAIL_PATTERNS = _TERMINAL_FAIL_PATTERNS
+TRANSIENT_FAIL_HINTS = _TRANSIENT_FAIL_HINTS
+
+
+def _is_terminal_fail(text):
+    return is_terminal_fail_text(text)
+
+
 def _delivered_ids():
+
+
+
+
+
 
     global _DELIVERED_IDS_CACHE
     if _DELIVERED_IDS_CACHE is not None:
@@ -171,7 +192,15 @@ def _delivered_ids():
     try:
         from scripts import stats_core as _sc
         _st = _sc.compute(WORK_DIR)
-        for _r in (_st.get("delivered") or []) + (_st.get("failed") or []):
+        for _r in (_st.get("delivered") or []):
+            _jid = _r.get("job_id") or _r.get("jobId")
+            if _jid:
+                ids.add(_jid)
+        for _r in (_st.get("failed") or []):
+            _text = " ".join(str(_r.get(k) or "") for k in
+                             ("detail", "reason", "deliver_detail", "deliver_status"))
+            if not _is_terminal_fail(_text):
+                continue
             _jid = _r.get("job_id") or _r.get("jobId")
             if _jid:
                 ids.add(_jid)
@@ -333,8 +362,12 @@ def step_init(city_code=_PROFILE_CITY):
         print("[初始化] 请先运行: python env_check.py")
         return False
 
-    if not ensure_active_tab():
-        print("[初始化] ERROR: 无法建立标签页")
+
+
+
+    _tab_ok, _tid, _tloc, _terr = ensure_active_tab_ex(expect_url="", cleanup=True)
+    if not _tab_ok:
+        print(f"[初始化] ERROR: 标签页校验失败 - {_terr}")
         return False
 
     print("[初始化] WebBridge 环境正常")
@@ -370,6 +403,10 @@ def step_init(city_code=_PROFILE_CITY):
     if not navigate_to_recommend(city_code):
         print("[初始化] ERROR: 导航到推荐页失败")
         return False
+
+
+
+    set_target_tab(current_url())
 
 
     print(f"\n[初始化] ★ 推荐页已就绪")
@@ -453,6 +490,9 @@ def step_navigate_search(keyword, city_code=_PROFILE_CITY):
         print(f"[搜索] ERROR: 导航到搜索页失败 (关键词: {keyword})")
         print(f"[搜索] 该关键词可能无搜索结果，请尝试其他关键词")
         return False
+
+
+    set_target_tab(current_url())
 
 
     mark_keyword_tried(clean_kw)
@@ -857,6 +897,15 @@ def step_read(index):
         print("ERROR: WebBridge 不可达")
         return False
 
+
+
+    _tab_ok, _tid, _tloc, _terr = ensure_active_tab_ex(expect_url=get_target_tab(SESSION), cleanup=True)
+    if not _tab_ok:
+        print(f"[串行] 页面落点校验失败: {_terr}")
+        print("[串行] ★ 当前活动页不是本轮登记的目标页，为避免读错岗位已停止。")
+        print("[串行] ★ 查看状态: --step status；确需重建页面: 用户确认后 --step init")
+        return False
+
     result = read_jd_for_job(jid)
 
     if not result.get('ok'):
@@ -865,7 +914,9 @@ def step_read(index):
         print(f"[串行] 根因: read找不到卡片，几乎都是因为Agent在流水线运行期")
         print(f"[串行]       做了页面切换/刷新/导航，导致推荐列表重排序、卡片漂移。")
         print(f"[串行] ★ 正确做法: 立即停止，提示用户当前状态，等待用户指示。")
-        print(f"[串行] ★ 禁止: 刷新页面、切换标签页、navigate、滚动重试（方向错误）。")
+        print(f"[串行] ★ 禁止: 刷新页面、手动切换标签页、navigate、滚动重试（方向错误）。")
+        print(f"[串行]   说明: 技能自身会在每次投递前校验落点并清理多余的 BOSS 标签页，")
+        print(f"[串行]   那是内部行为、不影响你在看的页面；AI 侧不用也不许额外动页。")
         print(f"[串行] ★ 若确需恢复，只能由用户确认后执行 --step init 重定位推荐页。")
         atomic_dump_json(CURRENT_JD, { 'index': index, 'total': len(jobs), 'jobId': jid, 'title': title, 'company': company, 'salary': salary, 'page_order': page_order, 'jd_text': '', 'error': result.get('detail', ''), 'surface_info': job, }, indent=2)
         return False
@@ -1247,6 +1298,96 @@ def step_decide(index):
 
 
 
+def step_reset_failed(include_terminal=False):
+
+
+
+
+
+
+
+
+
+
+
+
+
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    archive_path = os.path.join(WORK_DIR, f"failed_archive_{ts}.json")
+    archive = {"archived_at": ts, "include_terminal": include_terminal,
+               "stream_failed": [], "serial_results": []}
+    cleared_stream = 0
+    kept_terminal = 0
+    cleared_serial = 0
+
+
+    pm = ProgressManager(PROGRESS_FILE)
+    pm.load()
+    failed = list(pm.data.get('failed', []) or [])
+    archive["stream_failed"] = failed
+    keep = []
+    for j in failed:
+        text = " ".join(str(j.get(k) or "") for k in ("reason", "detail", "deliver_detail"))
+        if not include_terminal and _is_terminal_fail(text):
+            keep.append(j)
+            kept_terminal += 1
+        else:
+            cleared_stream += 1
+
+
+
+    try:
+        progress = load_serial_progress()
+    except Exception as e:
+        print(f"[清理] serial_progress 读取失败，已中止（台账未做任何修改，可重试）: {e}")
+        return False
+    new_results = []
+    for r in (progress.get('results', []) or []):
+        ds = str(r.get('deliver_status') or '').lower()
+        if ds in ("fail", "failed", "error"):
+            text = " ".join(str(r.get(k) or "") for k in
+                            ("deliver_detail", "reason", "deliver_status"))
+            if include_terminal or not _is_terminal_fail(text):
+                archive["serial_results"].append(r)
+                cleared_serial += 1
+                continue
+        new_results.append(r)
+
+
+
+    try:
+        atomic_dump_json(archive_path, archive, indent=2)
+    except Exception as e:
+        print(f"[清理] 归档写入失败，已中止（台账未做任何修改，可重试）: {e}")
+        return False
+
+
+    try:
+        pm.data['failed'] = keep
+        pm.save()
+    except Exception as e:
+        print(f"[清理] stream_progress 写回失败（归档已留证，可重跑本步骤收敛）: {e}")
+        return False
+    try:
+        progress['results'] = new_results
+        save_serial_progress(progress)
+    except Exception as e:
+        print(f"[清理] serial_progress 写回失败（归档已留证，可重跑本步骤收敛）: {e}")
+        return False
+
+    invalidate_delivered_cache()
+
+    print("[清理] ═══ 失败记录已归档并清除 ═══")
+    print(f"[清理] 归档: {archive_path}")
+    print(f"[清理] 清除 stream_progress {cleared_stream} 条 / serial_progress {cleared_serial} 条")
+    if kept_terminal:
+        print(f"[清理] 保留终止态失败 {kept_terminal} 条（重复投递/上限类，重投会撞风控）")
+    print(f"[清理] 范围: {'全部失败' if include_terminal else '仅可重试失败'}")
+    print(f"[清理] 已投递成功记录未受影响")
+    print(f"[清理] 下一步: python serial_loop.py --step next-batch")
+    return True
+
+
 def step_finish():
 
 
@@ -1517,8 +1658,10 @@ def main():
     parser.add_argument("--step", required=True,
                         choices=['init', 'next-batch', 'build-queue', 'read', 'write-decision',
                                  'decide', 'evolve', 'navigate-search', 'add-keyword',
-                                 'finish', 'status'],
-                        help="执行步骤")
+                                 'finish', 'status', 'reset-failed'],
+                        help="执行步骤 (reset-failed: 归档并清除失败记录，让岗位重新可投)")
+    parser.add_argument("--include-terminal", action="store_true",
+                        help="reset-failed 时连终止态失败(重复投递/上限类)一起清除，慎用")
     parser.add_argument("--index", type=int, default=0,
                         help="处理第几条 (read/decide时需要)")
     parser.add_argument("--decision", default="",
@@ -1540,6 +1683,21 @@ def main():
     parser.add_argument("--ack-risk", action="store_true", dest="ack_risk",
                         help="人工确认风控页/限流已解除，清除停机标记（仅 --step init 生效）")
     args = parser.parse_args()
+
+
+
+
+
+    if args.step != 'status':
+        _lock, _holder = run_lock.acquire(args.step)
+        if _lock is None:
+            print("[锁] 另一轮任务正在进行: {0}".format(run_lock.describe(_holder)))
+            print("     并行的两次投递会互相覆盖进度台账，本步骤已拒绝执行。")
+            print("     确认那边的任务确实停了再重试；如果它是崩溃/强杀留下的残影，"
+                  "直接重跑即可（持锁进程已退出会自动接管）。")
+            print("     查看占用者: python scripts/run_lock.py --info")
+            print("     确认无人在跑却一直提示占用: python scripts/run_lock.py --clear")
+            sys.exit(2)
 
 
 
@@ -1594,6 +1752,9 @@ def main():
             print("ERROR: 需要 --keyword 参数")
             sys.exit(1)
         step_add_keyword(args.keyword)
+
+    elif args.step == 'reset-failed':
+        step_reset_failed(include_terminal=getattr(args, 'include_terminal', False))
 
     elif args.step == 'finish':
         step_finish()

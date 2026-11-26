@@ -34,7 +34,7 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SKILL_DIR)
 
 from scripts.webbridge_client import (
-    SESSION, health_check, ensure_active_tab,
+    SESSION, health_check, ensure_active_tab, ensure_active_tab_ex,
     clean_pid_files, evaluate, navigate,
 )
 from scripts.profile_loader import (
@@ -405,10 +405,12 @@ def auto_repair():
         return False
 
     print("[修复] 尝试重新建立标签页...")
-    if ensure_active_tab():
-        print("[修复] 标签页已恢复")
+    ok, _tid, _loc, _detail = ensure_active_tab_ex(cleanup=True)
+    if ok:
+        print(f"[修复] 标签页已恢复: {_loc}")
         return True
 
+    print(f"[修复] 标签页仍不可用: {_detail}")
     return False
 
 

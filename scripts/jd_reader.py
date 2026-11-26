@@ -261,5 +261,29 @@ def main():
         sys.exit(1)
 
 
+def _cli_entry():
+
+
+
+
+
+
+
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
+    from scripts import run_lock as _rl
+    lock, holder = _rl.acquire("jd-read", note="CLI 独立运行")
+    if lock is None:
+        print("[锁] 另一轮正在运行: {0}".format(_rl.describe(holder)))
+        print("      台账写盘会冲突，本次不执行；查看: python scripts/run_lock.py --info")
+        return 2
+    try:
+        rc = main()
+    finally:
+        lock.release()
+    return rc if isinstance(rc, int) else 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(_cli_entry())

@@ -39,6 +39,7 @@ from scripts.profile_loader import WORK_DIR, CITY_CODE as _PROFILE_CITY, TARGET_
 
 from scripts.webbridge_client import (
     SESSION, navigate, evaluate, health_check, ensure_active_tab,
+    ensure_active_tab_ex, set_target_tab,
     ProgressManager,
 )
 
@@ -304,11 +305,17 @@ def navigate_to_search(keyword, city_code=_PROFILE_CITY):
     print(f"[搜索] URL: {url}")
 
 
-    if not ensure_active_tab():
-        print(f"[搜索] ERROR: 无法建立独立 BOSS 标签页")
+    _ok, _tid, _turl, _detail = ensure_active_tab_ex(cleanup=True)
+    if not _ok:
+        print(f"[搜索] ERROR: 无法建立独立 BOSS 标签页 ({_detail})")
         return False, keyword
 
     navigate(url, wait_range=(8, 10))
+
+
+    _landing = evaluate("window.location.href") or ""
+    if _landing:
+        set_target_tab(_landing)
 
 
     current_url = evaluate("window.location.href") or ""
@@ -466,5 +473,29 @@ def main():
         print(json.dumps(state, ensure_ascii=False, indent=2))
 
 
+def _cli_entry():
+
+
+
+
+
+
+
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
+    from scripts import run_lock as _rl
+    lock, holder = _rl.acquire("evolve", note="CLI 独立运行")
+    if lock is None:
+        print("[锁] 另一轮正在运行: {0}".format(_rl.describe(holder)))
+        print("      台账写盘会冲突，本次不执行；查看: python scripts/run_lock.py --info")
+        return 2
+    try:
+        rc = main()
+    finally:
+        lock.release()
+    return rc if isinstance(rc, int) else 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(_cli_entry())

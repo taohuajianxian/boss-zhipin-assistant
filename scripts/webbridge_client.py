@@ -426,6 +426,32 @@ def handle_popup(session=SESSION, max_rounds=_POPUP_MAX_ROUNDS, skip_if_clean=Fa
 
 
 
+
+
+
+
+
+
+
+TERMINAL_FAIL_PATTERNS = ("重复投递", "已投递", "已经投递", "已达上线", "达到上限",
+                          "沟通上限", "今日上限", "不感兴趣",
+                          "职位已关闭", "岗位已关闭", "职位已下线", "岗位已下线",
+                          "停止招聘")
+
+TRANSIENT_FAIL_HINTS = ("标签页", "tab", "webbridge", "落点", "选择器", "超时", "网络")
+
+
+def is_terminal_fail_text(text):
+
+    text = str(text or "").strip()
+    if not text:
+        return False
+    low = text.lower()
+    if any(h in low for h in TRANSIENT_FAIL_HINTS):
+        return False
+    return any(p in text for p in TERMINAL_FAIL_PATTERNS)
+
+
 class ProgressManager:
 
 
@@ -459,12 +485,45 @@ class ProgressManager:
     def failed_ids(self):
         return set(j['jobId'] for j in self.data.get('failed', []))
 
+
+
+    TERMINAL_FAIL_PATTERNS = TERMINAL_FAIL_PATTERNS
+
+    @property
+    def terminal_failed_ids(self):
+
+        ids = set()
+        for j in (self.data.get('failed', []) or []):
+            text = " ".join(str(j.get(k) or "") for k in ("reason", "detail", "deliver_detail"))
+            if is_terminal_fail_text(text):
+                jid = j.get('jobId') or j.get('job_id')
+                if jid:
+                    ids.add(jid)
+        return ids
+
+    @property
+    def retryable_failed_ids(self):
+
+        return self.failed_ids - self.terminal_failed_ids
+
     @property
     def all_done_ids(self):
+
         return self.delivered_ids | self.failed_ids
 
-    def is_done(self, job_id):
-        return job_id in self.all_done_ids
+    def is_done(self, job_id, include_retryable_failed=False):
+
+
+
+
+
+        if job_id in self.delivered_ids:
+            return True
+        if job_id in self.terminal_failed_ids:
+            return True
+        if include_retryable_failed and job_id in self.failed_ids:
+            return True
+        return False
 
     def add_delivered(self, job_id, job):
         self.data['delivered'].append({
@@ -510,7 +569,187 @@ def health_check(host=DEFAULT_HOST, port=DEFAULT_PORT):
         return False
 
 
-def ensure_active_tab(session=SESSION, timeout_wait=10):
+
+
+
+
+
+
+
+
+
+
+
+
+
+_TAB_STATE_DIR = os.path.join(os.path.expanduser("~"), ".boss_zhipin_deliver")
+_TAB_STATE_FILE = os.path.join(_TAB_STATE_DIR, "tab_target.json")
+_JOB_CARD_SELECTOR = ".job-card-wrap, .job-card-box, .job-card-wrapper"
+
+_IGNORED_QUERY_KEYS = {"_security_check", "seoRefer", "ka", "src", "from", "lid",
+                       "sessionid", "securityId", "randomKey"}
+
+
+def _norm_url(url):
+
+    if not url:
+        return ""
+    u = str(url).strip().split("#")[0]
+    u = re.sub(r"^https?://", "", u, flags=re.I)
+    u = re.sub(r"^www\.", "", u, flags=re.I)
+    if "?" in u:
+        path, qs = u.split("?", 1)
+        keep = []
+        for kv in qs.split("&"):
+            if not kv:
+                continue
+            if kv.split("=", 1)[0] in _IGNORED_QUERY_KEYS:
+                continue
+            keep.append(kv)
+        u = path + ("?" + "&".join(sorted(keep)) if keep else "")
+    return u.rstrip("/")
+
+
+def same_page(url_a, url_b):
+
+    a, b = _norm_url(url_a), _norm_url(url_b)
+    return bool(a and b and a == b)
+
+
+def _tabs_raw(session=SESSION, timeout=5):
+
+    try:
+        r = api("list_tabs", {}, session=session, timeout=timeout)
+    except Exception:
+        return []
+    if not isinstance(r, dict) or not r.get("ok"):
+        return []
+    data = r.get("data", {})
+    if isinstance(data, dict):
+        tabs = data.get("tabs") or data.get("data") or []
+    elif isinstance(data, list):
+        tabs = data
+    else:
+        tabs = []
+    return [t for t in tabs if isinstance(t, dict)]
+
+
+def _tab_id(tab):
+
+    for key in ("tabId", "tab_id", "tabid", "id"):
+        v = tab.get(key)
+        if v not in (None, ""):
+            return str(v)
+    return ""
+
+
+def _tab_url(tab):
+    return str(tab.get("url") or "").strip()
+
+
+def current_url(session=SESSION):
+
+    try:
+        return str(evaluate("location.href", session=session) or "").strip()
+    except Exception:
+        return ""
+
+
+def job_card_count(session=SESSION):
+
+    try:
+        js = ('(function(){try{return document.querySelectorAll(%s).length}'
+              'catch(e){return 0}})()') % json.dumps(_JOB_CARD_SELECTOR)
+        return int(str(evaluate(js, session=session)).strip() or 0)
+    except Exception:
+        return 0
+
+
+def list_zhipin_tabs(session=SESSION):
+
+    return [t for t in _tabs_raw(session) if "zhipin.com" in _tab_url(t)]
+
+
+def set_target_tab(url, session=None):
+
+    try:
+        os.makedirs(_TAB_STATE_DIR, exist_ok=True)
+
+
+
+        atomic_dump_json(_TAB_STATE_FILE,
+                         {"url": str(url or ""), "session": session or SESSION,
+                          "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+        return True
+    except Exception as e:
+        print("[tab] 目标页台账写入失败: {0}".format(e))
+        return False
+
+
+def get_target_tab(session=None):
+
+
+
+
+
+
+
+
+    try:
+        with open(_TAB_STATE_FILE, "r", encoding="utf-8") as f:
+            rec = json.load(f) or {}
+    except Exception:
+        return ""
+    rec_session = rec.get("session")
+    if session and rec_session and str(rec_session) != str(session):
+        return ""
+    return str(rec.get("url") or "")
+
+
+def clear_target_tab():
+    set_target_tab("")
+
+
+def close_extra_zhipin_tabs(keep_tab_id="", session=SESSION, keep_url=""):
+
+
+
+
+
+
+    closed, failed = [], []
+    if not keep_tab_id and not keep_url:
+        return closed, failed, len(list_zhipin_tabs(session))
+    for attempt in range(3):
+        tabs = list_zhipin_tabs(session)
+        victims = []
+        for t in tabs:
+            tid, url = _tab_id(t), _tab_url(t)
+            if keep_tab_id and tid == keep_tab_id:
+                continue
+            if keep_url and same_page(url, keep_url):
+                continue
+            if tid:
+                victims.append(tid)
+        if not victims:
+            return closed, failed, len(tabs)
+        for tid in victims:
+            r = api("close_tab", {"tabId": tid}, session=session, timeout=5)
+            if isinstance(r, dict) and r.get("ok"):
+                closed.append(tid)
+            else:
+                failed.append(tid)
+            time.sleep(0.3)
+        if attempt < 2:
+            time.sleep(0.5)
+    return closed, failed, len(list_zhipin_tabs(session))
+
+
+def ensure_active_tab_ex(session=SESSION, timeout_wait=10, expect_url=None,
+                         require_cards=False, cleanup=True, min_cards=1):
+
+
+
 
 
 
@@ -519,34 +758,109 @@ def ensure_active_tab(session=SESSION, timeout_wait=10):
 
     try:
         if not health_check():
-            return False
-
-
-        r = api("list_tabs", {}, session=session, timeout=5)
-        if r.get("ok"):
-            tabs_data = r.get("data", {})
-            tabs = tabs_data.get("tabs", []) if isinstance(tabs_data, dict) else tabs_data
-            if tabs:
-
-                for t in tabs:
-                    url = (t.get("url") or "") if isinstance(t, dict) else ""
-                    if "zhipin.com" in url:
-
-                        fr = api("find_tab", {"url": url}, session=session, timeout=5)
-                        if fr.get("ok"):
-                            if str(evaluate("1+1", session=session)) == "2":
-                                return True
-
-
-
-        nav_r = navigate("https://www.zhipin.com/web/geek/job",
-                         wait_range=(timeout_wait, timeout_wait + 2),
-                         session=session, new_tab=True, group_title="BOSS直聘投递")
-        if not nav_r.get("ok"):
-            return False
-        return str(evaluate("1+1", session=session)) == "2"
+            return False, "", "", "daemon_unreachable: WebBridge 未运行"
     except Exception:
-        return False
+        return False, "", "", "daemon_unreachable: 健康检查异常"
+
+    try:
+        expect = expect_url if expect_url is not None else get_target_tab(session)
+        tabs = list_zhipin_tabs(session)
+
+
+        if not tabs:
+            nav_url = expect or "https://www.zhipin.com/web/geek/job"
+            nav_r = navigate(nav_url, wait_range=(timeout_wait, timeout_wait + 2),
+                             session=session, new_tab=True, group_title="BOSS直聘投递")
+            if not isinstance(nav_r, dict) or not nav_r.get("ok"):
+                return False, "", "", "navigate_failed: 新建标签页失败"
+            time.sleep(1.0)
+            tabs = list_zhipin_tabs(session)
+            if not tabs:
+                return False, "", "", "no_boss_tab: 新建后仍无 BOSS 标签页"
+
+
+        expect_found = False
+        target = None
+        if expect:
+            for t in tabs:
+                if same_page(_tab_url(t), expect):
+                    target = t
+                    expect_found = True
+                    break
+        if target is None:
+            for t in tabs:
+                if "/web/geek/job" in _tab_url(t):
+                    target = t
+                    break
+        if target is None:
+            target = tabs[0]
+        target_id, target_url = _tab_id(target), _tab_url(target)
+
+
+        if cleanup and len(tabs) > 1:
+            close_extra_zhipin_tabs(target_id, session, target_url)
+            time.sleep(0.5)
+
+
+        try:
+            api("find_tab", {"url": target_url}, session=session, timeout=5)
+        except Exception:
+            pass
+        time.sleep(0.8)
+        loc = current_url(session)
+        if "zhipin.com" not in loc:
+            time.sleep(1.0)
+            loc = current_url(session)
+        if "zhipin.com" not in loc:
+            return False, target_id, loc, "wrong_landing: 活动页不是 BOSS 页面({0})".format(loc or "unknown")
+
+
+        if expect and not same_page(loc, expect):
+            try:
+                api("find_tab", {"url": expect}, session=session, timeout=5)
+            except Exception:
+                pass
+            time.sleep(1.0)
+            loc2 = current_url(session)
+            if same_page(loc2, expect):
+                loc = loc2
+            elif expect_found:
+
+                return (False, target_id, loc,
+                        "wrong_landing: 期望 {0} 实际 {1}".format(expect, loc))
+            else:
+
+
+                print("[tab] 目标页已失效，重绑当前页: {0}".format(loc))
+                set_target_tab(loc, session)
+
+
+        if require_cards:
+            n = 0
+            for _ in range(3):
+                n = job_card_count(session)
+                if n >= min_cards:
+                    break
+                time.sleep(2.0)
+            if n < min_cards:
+                return False, target_id, loc, "empty_list: 未渲染岗位卡片(卡片数={0})".format(n)
+
+
+        if not expect:
+            set_target_tab(loc, session)
+        return True, target_id, loc, ""
+    except Exception as e:
+        return False, "", "", "ensure_error: {0}".format(e)
+
+
+def ensure_active_tab(session=SESSION, timeout_wait=10, **kwargs):
+
+    ok, _tid, _url, detail = ensure_active_tab_ex(session=session,
+                                                 timeout_wait=timeout_wait,
+                                                 **kwargs)
+    if not ok and detail:
+        print("[tab] 标签页校验失败: {0}".format(detail))
+    return ok
 
 
 def clean_pid_files():
@@ -642,8 +956,24 @@ class WebBridge:
     def handle_popup(self):
         return handle_popup(self.session)
 
-    def ensure_active_tab(self, timeout_wait=10):
-        return ensure_active_tab(self.session, timeout_wait)
+    def ensure_active_tab(self, timeout_wait=10, **kwargs):
+        return ensure_active_tab(self.session, timeout_wait, **kwargs)
+
+    def ensure_active_tab_ex(self, timeout_wait=10, **kwargs):
+
+        return ensure_active_tab_ex(session=self.session, timeout_wait=timeout_wait, **kwargs)
+
+    def current_url(self):
+        return current_url(self.session)
+
+    def list_zhipin_tabs(self):
+        return list_zhipin_tabs(self.session)
+
+    def close_extra_zhipin_tabs(self, keep_tab_id="", keep_url=""):
+        return close_extra_zhipin_tabs(keep_tab_id, self.session, keep_url)
+
+    def set_target_tab(self, url):
+        return set_target_tab(url, self.session)
 
     def verify_login(self, username=None):
         if username is None:

@@ -41,7 +41,8 @@ from scripts.profile_loader import WORK_DIR, DAILY_TARGET
 
 from scripts.webbridge_client import (
     SESSION, evaluate, navigate, handle_popup, popup_residue,
-    ensure_active_tab, health_check,
+    ensure_active_tab, ensure_active_tab_ex, get_target_tab, current_url,
+    health_check,
     ProgressManager, register_signal_guard, SafeInterrupt,
 )
 from scripts.jd_reader import click_card_inplace
@@ -481,8 +482,12 @@ def deliver_inplace(job_id, job_info=None):
     title = (job_info or {}).get('title', '')[:25] if job_info else job_id
 
 
-    if not ensure_active_tab():
-        return 'fail', '无法确认独立标签页，停止投递'
+
+
+    _tab_ok, _tab_id, _tab_loc, _tab_err = ensure_active_tab_ex(
+        expect_url=get_target_tab(SESSION) or None, cleanup=True)
+    if not _tab_ok:
+        return 'fail', f'标签页校验失败，停止投递: {_tab_err}'
 
 
 
@@ -634,8 +639,10 @@ def run_batch(jobs_file, progress_file="stream_progress.json", max_count=0):
         print("WebBridge 不可达，请先运行 env_check.py")
         return None
 
-    if not ensure_active_tab():
-        print("无法建立标签页")
+    _tab_ok, _tid, _tloc, _terr = ensure_active_tab_ex(
+        expect_url=get_target_tab(SESSION) or None, cleanup=True)
+    if not _tab_ok:
+        print(f"无法建立/校验标签页: {_terr}")
         return None
 
     with open(jobs_file, 'r', encoding='utf-8') as f:
@@ -745,12 +752,35 @@ def run_batch(jobs_file, progress_file="stream_progress.json", max_count=0):
     return stats
 
 
-if __name__ == "__main__":
+def _cli_entry():
+
+
+
+
+
+
+
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
     import argparse
+    from scripts import run_lock as _rl
     parser = argparse.ArgumentParser(description="投递执行引擎")
     parser.add_argument("jobs_file", help="待投递岗位 JSON 文件")
     parser.add_argument("--progress", default="stream_progress.json", help="进度文件")
     parser.add_argument("--max", type=int, default=0, help="本批最多投递数量")
     args = parser.parse_args()
+    lock, holder = _rl.acquire("deliver", note="CLI 独立运行")
+    if lock is None:
+        print("[锁] 另一轮正在运行: {0}".format(_rl.describe(holder)))
+        print("      台账写盘会冲突，本次不执行；查看: python scripts/run_lock.py --info")
+        return 2
+    try:
+        rc = run_batch(args.jobs_file, args.progress, args.max)
+    finally:
+        lock.release()
+    return rc if isinstance(rc, int) else 0
 
-    run_batch(args.jobs_file, args.progress, args.max)
+
+if __name__ == "__main__":
+    sys.exit(_cli_entry())

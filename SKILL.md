@@ -1,12 +1,12 @@
----
+﻿---
 name: boss-zhipin-deliver
 slug: boss-zhipin-assistant
 displayName: BOSS直聘自动化投递
-version: 26.11.20-a
-description: BOSS直聘自动化投递技能。在已登录的 Chrome 上接管职位搜索与推荐页，按你填写的求职方向、城市、薪资下限与岗位画像逐条读取 JD 并做语义判断，符合的自动投递并跟踪结果，结束时生成 HTML 投递汇总。浏览器操作依赖 Kimi WebBridge（端口 10086），全程固定在本会话独立标签页，不抢占你正在看的页面。
-summary: BOSS直聘自动化投递：在你已登录的 Chrome 上按求职方向、城市、薪资下限与岗位画像逐条读取 JD 做语义判断，符合的自动投递并跟踪结果，结束时生成 HTML 投递汇总。全程固定独立标签页，不抢占你正在看的页面。
+version: 26.11.26-b
+description: BOSS直聘自动化投递技能。在已登录的 Chrome 上接管职位搜索与推荐页，按你填写的求职方向、城市、薪资下限与岗位画像逐条读取 JD 并做语义判断，符合的自动投递并跟踪结果，结束时生成 HTML 投递汇总。浏览器操作依赖 Kimi WebBridge（端口 10086），全程固定在本会话独立标签页（按标签页 ID 绑定、读 JD 与每次投递前校验落点、多余 BOSS 标签页自动清理），不抢占你正在看的页面。
+summary: BOSS直聘自动化投递：在你已登录的 Chrome 上按求职方向、城市、薪资下限与岗位画像逐条读取 JD 做语义判断，符合的自动投递并跟踪结果，结束时生成 HTML 投递汇总。全程固定独立标签页并校验落点，不抢占你正在看的页面。
 metadata:
-  version: "26.11.20-a"
+  version: "26.11.26-b"
 ---
 
 # BOSS直聘自动化投递 Skill
@@ -72,11 +72,24 @@ python scripts/serial_loop.py --step read --index N    # 读第 N 条 JD
 python scripts/serial_loop.py --step decide --index N  # 投或不投
 python scripts/serial_loop.py --step evolve        # 换关键词继续
 python scripts/serial_loop.py --step finish        # 生成投递汇总.html
+python scripts/serial_loop.py --step reset-failed  # 清掉可重试失败，让这些岗位重新进候选
 ```
 
 查看进度：`python scripts/serial_loop.py --step status`
 
 `status` 与 `投递汇总.html` **同一统计口径**（`scripts/stats_core.py`：以 jobId 为唯一键合并会话与历史并去重），不会出现两套数字；两源状态冲突条数会在输出中标注。
+
+### 去重口径（26.11.26 起）
+
+- **算完成、不再重投**：投递成功；以及**终止态失败**——重复投递拦截、今日沟通上限、薪资/画像不符、
+  **职位本身**已关闭/已下线/停止招聘这类「再投也一样」的结果。
+- **不算完成、下次自动重试**：临时性失败——卡片定位不到（`selector_broken`）、落点错位（`wrong_landing`）、
+  按钮/遮罩暂不可点、结果识别不出（`consecutive_unknown`）；
+  以及**技术性「已关闭」**：标签页已关闭、会话已关闭、WebBridge 连接已关闭、evaluate 失败等。
+  这类只是页面/通道抖了一下，岗位还开着，下一轮照常重投（26.11.26 前会被误判成终止态而永久锁死）。
+- 想让历史临时失败立刻重新进候选：`--step reset-failed`；连终止态一起清：`--step reset-failed --include-terminal`。
+  顺序固定为**先归档、归档写成功才清台账**：归档失败则一条都不清并返回失败，重跑即可，不会出现「数据清了、证据没了」。
+  成功记录一律不受影响。
 
 命中风控字样会**立即停机**（不重试、不清障复投），停机原因码写入 `serial_progress.json` 并在 `--step status` / 汇总页展示。人工确认页面恢复正常后清除停机标记：
 
@@ -100,6 +113,14 @@ python scripts/serial_loop.py --step init --ack-risk
 
 ## 运行稳定性
 - 所有状态文件原子写（临时文件 + fsync + os.replace），中断不会留空文件/半截 JSON，重跑即可续投；
+- **同一时刻只跑一轮**：动作类步骤启动时会抢一把运行锁（`run.lock`），已被占用就当场拒绝并退出（退出码 2）。
+  并行的两次投递会互相覆盖进度台账，表现是已投递记录凭空消失、老岗位被重复投递。
+  只想看进度不受影响：`--step status` 不加锁，跑任务时照常可查。
+  同一把锁也覆盖所有会单独跑起来的写台账脚本（`serial_loop` / `deliver_engine` / `jd_reader` / `report_builder` / `surface_cache` / `keyword_evolver` / `recommend_loader`），
+  所以手工调试单个脚本时同样会被挡住（这是对的：它和正在跑的那轮会互相覆盖台账）。只读的 `stats_core.py` 不加锁。
+  查谁占着：`python scripts/run_lock.py --info`；确认无人在跑仍提示占用：`python scripts/run_lock.py --clear`。
+  `--clear` 遇持锁进程还活着会拒绝（退出码 3）——删锁等于允许两个进程同时写台账；确认要强行拆互斥才加 `--force`。
+  崩溃/强杀留下的残留锁不必手工清，下次动作类步骤会自动接管（持锁进程已退出、或 pid 已被系统复用给别的进程，都视为残留）；
 - 页面对齐以当前 DOM 实卡数为唯一真源（`--step next-batch` 重建窗口），队列与页面等长同序，`read/decide` 的 `--index` 即页面卡片位；
 - 跑长任务禁止用管道截断输出（`| Select-Object -First N`、`| head -n N`），管道提前关闭会终止 python 进程；
 

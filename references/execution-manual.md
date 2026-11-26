@@ -31,7 +31,7 @@ python <SKILL_DIR>/scripts/env_check.py
 3. **AI 决策**：岗位 APPROVE / REJECT 必须由 Agent 依据 `user_profile.json` 语义判断，不得硬编码匹配。
 4. **知识来源只认云端适配数据**：页面选择器、点击动作一律取自云端同步的适配数据（本机缓存），不要手写选择器或临时拼接脚本塞进 evaluate。随包不带适配数据，首次运行先联网同步。
 5. **运行期严禁动页**：`init → next-batch → read → decide → evolve` 全流程严禁页面切换、刷新、导航、切标签页。推荐列表一旦被重排，`read` 就找不到已缓存卡片。read 失败 = 立即停止并提示用户，**绝不自行刷新/切页/滚动重试**；恢复只能经用户确认后重跑 `--step init`。
-6. **独立标签页**：全程固定在本会话自己打开的 BOSS 标签页，绝不借用用户当前查看的页面；用户切到别的标签不影响流水线。
+6. **独立标签页 + 落点校验**：全程固定在本会话自己打开的 BOSS 标签页，绝不借用用户当前查看的页面。首次进入（`--step init`）与换关键词（`--step navigate-search`）后，脚本会清理多余的 BOSS 标签页并把当前页（连同 `session`）登记为目标页，认页时校验 `session` 是否与本轮一致（不一致视为无目标页，重新登记，不会被别的进程/安装副本写脏的台账带偏）；此后每次投递前都以「目标页 URL + 活动页 URL」比对，落点不符**直接停机**（`wrong_landing`），不会将就着在错页上投。标签页管理是脚本内部行为，Agent 侧仍禁止手动动页。
 7. **激活必须走 CLI**：用户把激活码发到对话后，必须执行 `python scripts/entitlement.py --activate <CODE>`，**严禁只口头回复「已激活」**；授权判定只认脚本落盘的 `license.json`。
 
 ---
@@ -49,6 +49,7 @@ python <SKILL_DIR>/scripts/env_check.py
 | navigate-search | `serial_loop.py --step navigate-search --keyword "词"` | 按关键词搜索导航 |
 | finish | `serial_loop.py --step finish` | 生成投递汇总 HTML（强制） |
 | status | `serial_loop.py --step status` | 查看当前进度 |
+| reset-failed | `serial_loop.py --step reset-failed [--include-terminal]` | 归档并清除失败记录（默认只清可重试失败），让这些岗位重新进候选；**先归档、归档写成功才动台账**，归档失败则一条不清并返回失败（重跑即可收敛）；成功记录不动 |
 | ack-risk | `serial_loop.py --step init --ack-risk` | 人工确认风控页/限流已解除，清除停机标记后重新 init |
 
 状态文件（位于 WORK_DIR）：`page_state.json`、`batch_state.json`、`surface_cache.json`、`jd_to_read.json`、`current_jd.json`、`decision.json`、`stream_progress.json`。
@@ -134,7 +135,7 @@ python <SKILL_DIR>/scripts/serial_loop.py --step read --index N
 read 阶段有两类**不读 JD 的自动跳过**（均直接写 `decision.json=REJECT`，索引占位保持不变）：
 
 - **规则排除**：该条 `skip=true`；
-- **重复投递拦截**：该 `jobId` 已在累计台账 `delivery_unified.json` 中投递成功/失败（跨会话去重，防止按钮仍显示"立即沟通"导致重复投递）。
+- **重复投递拦截**：该 `jobId` 已在累计台账 `delivery_unified.json` 中**投递成功**，或属于**终止态失败**（重复投递拦截、今日沟通上限、薪资/画像不符、职位本身已关闭/已下线/停止招聘等「再投也一样」的结果）——跨会话去重，防止按钮仍显示"立即沟通"导致重复投递。**临时性失败不算拦截**（卡片定位不到、落点错位、遮罩不可点、结果识别不出，以及「标签页已关闭 / 会话已关闭 / WebBridge 连接已关闭」这类技术性关闭）：这些岗位下次仍在候选里，会自动重读重投；不想等下次可先跑 `--step reset-failed`。
 
 **3b. Agent 决策** — 输出 APPROVE / REJECT：
 
